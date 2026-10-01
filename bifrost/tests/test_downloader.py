@@ -87,6 +87,18 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(dl.sanitise_filename("a\\b"), "a-b")
         self.assertEqual(dl.sanitise_filename('What? Why: "Not"'), "What Why Not")
 
+    def test_safe_punctuation_is_kept_so_real_names_survive(self):
+        self.assertEqual(dl.sanitise_filename("P!nk"), "P!nk")
+        self.assertEqual(dl.sanitise_filename("Can\u2019t Take Me Home"), "Can\u2019t Take Me Home")
+        self.assertEqual(dl.sanitise_filename("I'd Come for You"), "I'd Come for You")
+        self.assertEqual(dl.sanitise_filename("Rock & Roll, Pt. 2 (Live) [Remastered]"),
+                         "Rock & Roll, Pt. 2 (Live) [Remastered]")
+        self.assertEqual(dl.sanitise_filename("S.E.X."), "S.E.X")
+
+    def test_characters_a_filesystem_rejects_are_still_removed(self):
+        for bad in '<>:"|?*\x00\x1f':
+            self.assertNotIn(bad, dl.sanitise_filename(f"a{bad}b"))
+
     def test_sanitised_names_cannot_traverse(self):
         for nasty in ("../../etc/passwd", "a/b\\c", "..", "", "x\x00y", "  . "):
             name = dl.sanitise_filename(nasty)

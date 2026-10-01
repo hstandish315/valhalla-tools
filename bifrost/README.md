@@ -90,10 +90,21 @@ Everything downloaded, ripped or imported. Select tracks (or none, for all) and:
 
 ![Export dialog](docs/export.png)
 
-The export dialog writes either the **original files** or a **bilateral version**
-rendered through your current settings (FLAC or MP3). Names can be flat
-(`Artist - Title`, best for car stereos), `Artist/Title`, or
-`Artist/Album/NN - Title`. On FAT, exFAT and NTFS drives, names are made Windows-safe
+The export dialog has three modes:
+
+- **Original files**: exact copies (FLAC stays FLAC).
+- **Original → MP3**: the unchanged music as MP3, for players that can't read FLAC (most
+  cars). An MP3 source is copied as it is rather than re-encoded.
+- **Bilateral version**: each track rendered through your current sweep and pulse
+  settings (MP3 by default for a USB drive, or FLAC) into a **separate folder called
+  `audio_edits`**, apart from your originals.
+
+Every export carries the track's **tags and cover art** with it, and MP3s get both
+ID3v2.3 and ID3v1 tags, the combination older car head units read most reliably.
+(A rendered file used to lose all its tags, so a car showed bare filenames in
+alphabetical order; there is a test for exactly this.) Names default to
+`Artist/Album/NN - Title`, so an album plays in track order; `Artist - Title` and
+`Artist/Title` are also offered. On FAT, exFAT and NTFS drives, names are made Windows-safe
 (`? : " * < > |` removed, `/` becomes `-`), and on FAT files over 4 GiB are skipped; space is checked before anything is written; files are written
 to a temp name, flushed to disk, then renamed, so unplugging mid-copy never leaves
 a truncated track that looks finished. Creative Commons tracks get an
@@ -112,12 +123,17 @@ editable; a disc MusicBrainz doesn't know is still rippable.
 ![Rip](docs/rip.png)
 
 - **Save to…** chooses the folder the files go in (default `~/Music/Bifrost/Rips`);
-  files land as `Artist/Album/NN - Title.flac`.
+  files land as `Artist/Album/NN - Title.flac`. Safe punctuation is kept in names
+  (`P!nk`, `Can’t Take Me Home`); only characters some filesystem rejects are dropped.
+- **Cover art** is embedded for FLAC and MP3 (fetched from the Cover Art Archive for the
+  matched album; untick *Embed cover art* to skip it). Ogg and Opus can't carry a picture
+  through ffmpeg, so they are ripped without one.
 - Formats: **FLAC** (lossless, default), MP3 (V0), Opus 128k, Ogg q5.
 - Reads use GStreamer's error-correcting `cdparanoiasrc` (`paranoia-mode=full`),
   then ffmpeg encodes and tags. A track whose length doesn't match the disc's
   table of contents is rejected rather than saved.
-- Untick *Look up names on MusicBrainz* to keep the disc ID off the network.
+- Untick *Look up names on MusicBrainz* to keep the disc ID off the network, and
+  *Embed cover art* to keep the release ID off it too.
 - Data tracks on mixed-mode discs are shown but can't be ripped as audio.
 - Rip discs you own; copyright rules differ by country.
 
@@ -189,6 +205,10 @@ Verified on real hardware while building this:
 - **CD ripping** end to end: table of contents, exact MusicBrainz match, a rip whose
   length equalled the disc's sector count, a FLAC that decodes bit-identical to the
   ripped data, tagged MP3/FLAC; and the GUI's rip flow against a real disc.
+- **Cover art** from a real disc: MusicBrainz match, real Cover Art Archive download,
+  and the embedded 500×500 picture extracted back out and checked to be the right album.
+  A real ripped track exported as a bilateral MP3 came out with title, artist, album,
+  album artist, track, year, cover, and both ID3v2 and ID3v1 tags.
 - **USB export** on a real NTFS stick, through the actual dialog: originals
   byte-identical (SHA-256), Windows-safe names for a deliberately hostile title,
   attribution file written, a repeat export skipped everything, bilateral MP3s
@@ -205,7 +225,9 @@ Verified on real hardware while building this:
 Confirmed by ear on a real Spotify session: switching songs while followed keeps the
 effect on, the static is gone, and the level matches the original.
 
-**Not** verified: exporting to a FAT or exFAT stick (the FAT 4 GiB and name rules
+**Not** verified: the `audio_edits` and MP3 export modes on a real stick (they were run
+against a folder standing in for one and through the real widgets; the earlier real-stick
+run covered the original-file mode), exporting to a FAT or exFAT stick (the FAT 4 GiB and name rules
 are unit-tested; only NTFS was available) and how comfortable the default 16 Hz pulse
 depth is over long sessions (it is a starting point; every parameter stays live).
 

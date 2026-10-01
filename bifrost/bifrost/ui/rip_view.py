@@ -66,6 +66,7 @@ class RipView(Gtk.Box):
         self.disc = ""
         self.rows: list[RipRow] = []
         self.ripped: list = []
+        self.cover: bytes | None = None         # front cover for the matched release, if found
         self._cancel = threading.Event()
         self._ripping = False
         self._gen = 0                       # discards answers from superseded refreshes
@@ -135,6 +136,12 @@ class RipView(Gtk.Box):
         self.chk_lookup.set_active(bool(ctx.settings["rip_lookup"]))
         self.chk_lookup.connect("toggled", lambda w: ctx.settings.set("rip_lookup", w.get_active()))
         opts2.append(self.chk_lookup)
+        self.chk_cover = Gtk.CheckButton(label="Embed cover art")
+        self.chk_cover.set_tooltip_text("Fetched from the Cover Art Archive for the matched album (sends the "
+                                        "release ID). FLAC and MP3 only; Ogg/Opus can't carry a picture.")
+        self.chk_cover.set_active(bool(ctx.settings["rip_cover"]))
+        self.chk_cover.connect("toggled", lambda w: ctx.settings.set("rip_cover", w.get_active()))
+        opts2.append(self.chk_cover)
         self.chk_eject = Gtk.CheckButton(label="Eject when done")
         self.chk_eject.set_active(bool(ctx.settings["rip_eject"]))
         self.chk_eject.connect("toggled", lambda w: ctx.settings.set("rip_eject", w.get_active()))
@@ -198,6 +205,11 @@ class RipView(Gtk.Box):
             try:
                 album = musicbrainz.lookup(did)
                 GLib.idle_add(self._album_ready, gen, album, "")
+                if album and album.mbid and self.ctx.settings["rip_cover"]:
+                    try:
+                        GLib.idle_add(self._cover_ready, gen, musicbrainz.fetch_cover(album.mbid))
+                    except (urllib.error.URLError, OSError, ValueError):
+                        GLib.idle_add(self._cover_ready, gen, None)
             except (urllib.error.URLError, OSError, ValueError) as exc:
                 GLib.idle_add(self._album_ready, gen, None, f"Name lookup failed ({exc}); type the names in.")
 
@@ -237,7 +249,15 @@ class RipView(Gtk.Box):
         self._note(f"Matched “{album.title}” by {album.artist} on MusicBrainz. Check the names, then rip.")
         return False
 
+    def _cover_ready(self, gen, cover):
+        if gen == self._gen:
+            self.cover = cover
+            if cover:
+                self._note(self.disc_note.get_label() + "  Cover art found.")
+        return False
+
     def _clear(self) -> None:
+        self.cover = None
         self.toc, self.rows = None, []
         self.list.remove_all()
         self._sync_buttons()
@@ -310,10 +330,11 @@ class RipView(Gtk.Box):
         for r in self.rows:
             r.say("")
         self._sync_buttons()
-        threading.Thread(target=self._rip_all, args=(jobs, fmt, self.device), daemon=True,
+        cover = self.cover if self.chk_cover.get_active() and fmt in cd.COVER_FORMATS else None
+        threading.Thread(target=self._rip_all, args=(jobs, fmt, self.device, cover), daemon=True,
                          name="bifrost-rip").start()
 
-    def _rip_all(self, jobs, fmt, device) -> None:
+    def _rip_all(self, jobs, fmt, device, cover=None) -> None:
         done_ok = 0
         for i, (row, tags, path) in enumerate(jobs):
             if self._cancel.is_set():
@@ -324,7 +345,7 @@ class RipView(Gtk.Box):
                 GLib.idle_add(self._progress, row, (i + frac) / len(jobs), frac)
             try:
                 final = cd.rip_track(device, row.track, path, fmt, tags, progress=prog,
-                                     cancel=self._cancel.is_set)
+                                     cancel=self._cancel.is_set, cover=cover)
             except cd.CDError as exc:
                 if str(exc) == "cancelled":
                     GLib.idle_add(row.say, "cancelled", True)

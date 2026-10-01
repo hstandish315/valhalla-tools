@@ -22,7 +22,7 @@ LAYOUTS = (("flat", "Artist - Title   (one folder; best for car stereos)"),
            ("artist", "Artist / Title"),
            ("album", "Artist / Album / Title"))
 FORMATS = (("flac", "FLAC (lossless)"), ("mp3", "MP3 (high quality)"))
-USB_FOLDER = "Bifrost"
+USB_FOLDER = "Bifrost"           # originals; bilateral versions go to export.EDITS_FOLDER (audio_edits)
 
 
 def open_folder(path: str) -> None:
@@ -85,10 +85,14 @@ class ExportDialog(Gtk.Window):
         # what to write -------------------------------------------------------
         mrow = Gtk.Box(spacing=8)
         self.btn_orig = Gtk.ToggleButton(label="Original files")
+        self.btn_conv = Gtk.ToggleButton(label="Original → MP3")
         self.btn_proc = Gtk.ToggleButton(label="Bilateral version")
+        self.btn_conv.set_group(self.btn_orig)
         self.btn_proc.set_group(self.btn_orig)
-        self.btn_proc.set_tooltip_text("Renders each track through your current sweep and pulse settings.")
-        for b in (self.btn_orig, self.btn_proc):
+        self.btn_conv.set_tooltip_text("The unchanged music as MP3, for players that can't read FLAC (most cars).")
+        self.btn_proc.set_tooltip_text("Renders each track through your current sweep and pulse settings, "
+                                       "into a separate folder called audio_edits.")
+        for b in (self.btn_orig, self.btn_conv, self.btn_proc):
             b.add_css_class("preset")
             mrow.append(b)
         self.dd_fmt = Gtk.DropDown.new_from_strings([t for _, t in FORMATS])
@@ -131,9 +135,12 @@ class ExportDialog(Gtk.Window):
 
         self.btn_folder.connect("toggled", lambda *_: self._sync())
         self.btn_proc.connect("toggled", lambda *_: self._sync())
+        self.btn_conv.connect("toggled", lambda *_: self._sync())
         self.connect("close-request", self._on_close_request)
         (self.btn_usb if destination == "usb" else self.btn_folder).set_active(True)
         self.btn_orig.set_active(True)
+        if destination == "usb":
+            self.dd_fmt.set_selected(1)               # MP3: it plays in cars; FLAC often won't
         self._sync()
         if destination == "usb":
             self.scan_usb()
@@ -147,15 +154,28 @@ class ExportDialog(Gtk.Window):
     def processed(self) -> bool:
         return self.btn_proc.get_active()
 
+    @property
+    def converted(self) -> bool:
+        return self.btn_conv.get_active()
+
+    @property
+    def mode(self) -> str:
+        return "bilateral" if self.processed else "mp3" if self.converted else "original"
+
     def _sync(self) -> None:
         self.stack.set_visible_child_name("usb" if self.use_usb else "folder")
         self.dd_fmt.set_visible(self.processed)
         nd = [e for e in self.entries if not e.allows_modification]
-        if self.processed and nd:
+        if self.mode != "original" and nd:
             self.mode_note.set_label(f"{len(nd)} track{'s are' if len(nd) != 1 else ' is'} licensed "
                                      f"no-derivatives and will be skipped in this mode.")
         elif self.processed:
-            self.mode_note.set_label("Each track is rendered through your current sweep and pulse settings.")
+            self.mode_note.set_label(f"Each track is rendered through your current sweep and pulse settings "
+                                     f"and saved, with its tags and cover art, in a separate folder called "
+                                     f"{export.EDITS_FOLDER}.")
+        elif self.converted:
+            self.mode_note.set_label("The unchanged music as MP3 (tags and cover art kept), for players that "
+                                     "can't read FLAC. MP3 files are copied as they are.")
         else:
             self.mode_note.set_label("Exact copies of the files in your library.")
         if self.use_usb and not self.volumes:
@@ -208,24 +228,28 @@ class ExportDialog(Gtk.Window):
         self.bar.set_fraction(0.0)
         self._say("Starting…")
         threading.Thread(target=self._work, daemon=True, name="bifrost-export",
-                         args=(vol, layout, fmt, self.processed, self.folder)).start()
+                         args=(vol, layout, fmt, self.mode, self.folder)).start()
 
-    def _work(self, vol, layout, fmt, processed, folder) -> None:
+    def _work(self, vol, layout, fmt, mode, folder) -> None:
         try:
+            # Bilateral versions get a folder of their own, apart from the originals.
             if vol is not None:
                 root = export.mount_volume(vol)
-                dest = os.path.join(root, USB_FOLDER)
-                os.makedirs(dest, exist_ok=True)
+                dest = os.path.join(root, export.EDITS_FOLDER if mode == "bilateral" else USB_FOLDER)
                 fat, safe = vol.is_fat, vol.windows_names
             else:
-                dest, fat, safe = folder, False, False
-            transform = export.processing_transform(self.ctx.chain) if processed else None
+                dest = os.path.join(folder, export.EDITS_FOLDER) if mode == "bilateral" else folder
+                fat, safe = False, False
+            os.makedirs(dest, exist_ok=True)
+            transform = (export.processing_transform(self.ctx.chain, self.entries) if mode == "bilateral"
+                         else export.conversion_transform(self.entries) if mode == "mp3" else None)
+            out_ext = fmt if mode == "bilateral" else "mp3" if mode == "mp3" else None
 
             def prog(done, total, name):
                 GLib.idle_add(self._progress, done, total, name)
 
             res = export.copy_tracks(self.entries, dest, layout=layout, fat=fat, safe_names=safe, transform=transform,
-                                     transform_ext=fmt if processed else None, progress=prog,
+                                     transform_ext=out_ext, progress=prog,
                                      cancel=self._cancel.is_set)
             GLib.idle_add(self._done, res, dest, vol)
         except export.ExportError as exc:

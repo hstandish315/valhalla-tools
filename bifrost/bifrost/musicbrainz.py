@@ -10,14 +10,23 @@ then offers editable "Track NN" names instead.
 
 from __future__ import annotations
 
+import re
 import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .sources.common import Http
+from .downloader import _CheckedRedirect, host_allowed
+from .sources.common import USER_AGENT, Http
 
 API = "https://musicbrainz.org/ws/2/discid/{id}"
 INC = "recordings+artist-credits"
+
+COVER_URL = "https://coverartarchive.org/release/{mbid}/front-500"
+COVER_HOSTS = ("coverartarchive.org", "archive.org")        # the CAA redirects to archive.org storage
+MAX_COVER_BYTES = 5 * 1024 * 1024
+_MBID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
 @dataclass
@@ -76,3 +85,44 @@ def lookup(disc: str, http: Optional[Http] = None) -> Optional[Album]:
             return None
         raise
     return parse(payload, disc)
+
+
+def image_kind(data: bytes) -> Optional[str]:
+    """'jpg' or 'png' judged by the file's own signature, never by what a server claims."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    return None
+
+
+def fetch_cover(mbid: str, opener: Optional[urllib.request.OpenerDirector] = None) -> Optional[bytes]:
+    """
+    Front cover for a MusicBrainz release from the Cover Art Archive, or None if there
+    isn't one. The release ID must look like a UUID (it goes into a URL), every hop must
+    be https on an allowlisted host, the size is capped, and the bytes must really be a
+    JPEG or PNG. Other network failures propagate so the caller can say so.
+    """
+    if not _MBID.match(mbid or ""):
+        return None
+
+    def check(url: str) -> None:
+        u = urllib.parse.urlparse(url)
+        if u.scheme != "https" or not host_allowed(u.hostname or "", COVER_HOSTS):
+            raise urllib.error.URLError(f"refusing cover URL {url!r}")
+
+    url = COVER_URL.format(mbid=mbid.lower())
+    check(url)
+    opener = opener or urllib.request.build_opener(_CheckedRedirect(check))
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with opener.open(req, timeout=20) as resp:
+            data = resp.read(MAX_COVER_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        if exc.code in (404, 403):                          # no art for this release
+            return None
+        raise
+    if len(data) > MAX_COVER_BYTES or image_kind(data) is None:
+        return None
+    return data

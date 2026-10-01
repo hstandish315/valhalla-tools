@@ -14,6 +14,7 @@ the pipe paces the whole loop, so there is no timer to drift.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -301,17 +302,27 @@ class Engine:
                 sink.close()
 
 
-def render_offline(chain: Chain, path: str, out_path: str, seconds: Optional[float] = None) -> None:
+def render_offline(chain: Chain, path: str, out_path: str, seconds: Optional[float] = None,
+                   tags: Optional[dict] = None) -> None:
     """
     Run a file through the chain with no playback and write it with ffmpeg.
     The container is chosen from the extension (flac, wav, mp3, ogg...).
     """
     dec = _spawn_decoder(path, 0.0)
-    codec = ["-c:a", "libmp3lame", "-q:a", "2"] if out_path.lower().endswith(".mp3") else []
+    ext = os.path.splitext(out_path)[1].lower()
+    # The audio comes through the pipe; the *source file* is a second input purely so its
+    # tags and cover art carry over (without this, a rendered file has no title, artist,
+    # album or track number, and a car stereo shows bare filenames in the wrong order).
+    carry = ["-i", path, "-map", "0:a", "-map_metadata", "1"]
+    if ext in (".mp3", ".flac"):                       # ffmpeg can't attach a picture to Ogg/Opus
+        carry += ["-map", "1:v?", "-c:v", "copy", "-disposition:v", "attached_pic"]
+    codec = (["-c:a", "libmp3lame", "-q:a", "2", "-id3v2_version", "3", "-write_id3v1", "1"]
+             if ext == ".mp3" else [])
+    overrides = [a for k, v in (tags or {}).items() if v for a in ("-metadata", f"{k}={v}")]
     enc = subprocess.Popen(
         ["ffmpeg", "-v", "error", "-y", "-f", "f32le", "-ar", str(SAMPLE_RATE),
-         "-ac", str(CHANNELS), "-i", "-", *codec, out_path],
-        stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+         "-ac", str(CHANNELS), "-i", "-", *carry, *codec, *overrides, out_path],
+        stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     assert dec.stdout is not None and enc.stdin is not None
     limit = None if seconds is None else int(seconds * SAMPLE_RATE)
     done = 0
@@ -325,10 +336,26 @@ def render_offline(chain: Chain, path: str, out_path: str, seconds: Optional[flo
             block = np.frombuffer(raw[:usable], dtype=np.float32).reshape(-1, CHANNELS)
             enc.stdin.write(np.ascontiguousarray(chain.process(block)).tobytes())
             done += len(block)
+    except BrokenPipeError:
+        pass                                   # the encoder died; its exit status and stderr say why, below
     finally:
-        enc.stdin.close()
-        enc.wait(timeout=30)
+        # Clean up both children whatever happened above; raise only afterwards, so a failed
+        # export never leaves an ffmpeg decoder running.
+        try:
+            enc.stdin.close()
+        except OSError:
+            pass
+        try:
+            enc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            enc.kill()
+            enc.wait()
+        err = enc.stderr.read().decode(errors="replace").strip() if enc.stderr else ""
+        if enc.stderr:
+            enc.stderr.close()
         if dec.poll() is None:
             dec.kill()
         dec.wait(timeout=5)
         dec.stdout.close()
+    if enc.returncode != 0:
+        raise RuntimeError("encoding failed: " + (err.splitlines() or ["unknown error"])[-1][:200])

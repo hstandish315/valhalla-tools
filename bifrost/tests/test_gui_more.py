@@ -225,6 +225,7 @@ class TestExportDialog(Base):
         os.makedirs(dest)
         dlg = ExportDialog(self.ctx, self.entries(), "folder")
         dlg.folder = dest
+        dlg.dd_layout.set_selected(0)                               # flat: the default is now Artist/Album
         self.run_export(dlg)
         files = sorted(os.listdir(dest))
         self.assertIn("Band - Second.mp3", files)
@@ -269,10 +270,14 @@ class TestExportDialog(Base):
         dlg.folder = dest
         dlg.btn_proc.set_active(True)
         dlg.dd_fmt.set_selected(0)                                  # FLAC
+        dlg.dd_layout.set_selected(0)
         self.run_export(dlg)
-        flacs = [f for f in os.listdir(dest) if f.endswith(".flac")]
+        edits = os.path.join(dest, "audio_edits")                   # bilateral versions live apart
+        flacs = [f for f in os.listdir(edits) if f.endswith(".flac")]
         self.assertEqual(len(flacs), 2)
-        self.assertTrue(all(engine.is_audio_file(os.path.join(dest, f)) for f in flacs))
+        self.assertTrue(all(engine.is_audio_file(os.path.join(edits, f)) for f in flacs))
+        self.assertEqual([f for f in os.listdir(dest) if f.endswith((".flac", ".mp3"))], [],
+                         "nothing but the audio_edits folder should appear next to the originals")
 
     def test_no_derivatives_tracks_are_skipped_in_processed_mode_with_a_visible_reason(self):
         dest = os.path.join(self.tmp, "nd")
@@ -283,7 +288,8 @@ class TestExportDialog(Base):
         dlg.btn_proc.set_active(True)
         self.assertIn("no-derivatives", dlg.mode_note.get_label())
         self.run_export(dlg)
-        self.assertEqual([f for f in os.listdir(dest) if f.endswith(".mp3") or f.endswith(".flac")], [])
+        found = [f for _, _, fs in os.walk(dest) for f in fs if f.endswith((".mp3", ".flac"))]
+        self.assertEqual(found, [])
         self.assertIn("no-derivatives", dlg.status.get_label())
 
     def test_cancel_during_export_removes_partial_files(self):

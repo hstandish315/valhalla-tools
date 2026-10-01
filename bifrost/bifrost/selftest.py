@@ -93,6 +93,12 @@ def main(argv=None) -> int:
 
     if args.live:
         from .sources import archive, openverse
+        from . import musicbrainz
+        try:
+            cover = musicbrainz.fetch_cover("6019b737-9018-4e89-a4f5-ffb5ac783613")
+            ok &= check("live: cover art archive", bool(cover), f"{len(cover or b'') // 1024} KiB")
+        except Exception as exc:
+            ok &= check("live: cover art archive", False, str(exc))
         for name, fn in (("openverse", openverse.search), ("internet archive", archive.search)):
             try:
                 tracks, total = fn("ambient")

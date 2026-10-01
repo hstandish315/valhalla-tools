@@ -310,8 +310,10 @@ class BifrostWindow(Gtk.ApplicationWindow):
 
 
 class BifrostApp(Gtk.Application):
-    def __init__(self, fps: int = 30, ctx: Optional[Context] = None):
-        super().__init__(application_id=APP_ID)
+    def __init__(self, fps: int = 30, ctx: Optional[Context] = None, app_id: str = APP_ID):
+        # One instance per ID: launching a second copy raises the first window instead. Tools
+        # that must run beside the real app (the screenshot renderer) pass their own ID.
+        super().__init__(application_id=app_id)
         self.fps = fps
         self._ctx = ctx
 

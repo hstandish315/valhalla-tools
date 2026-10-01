@@ -29,6 +29,7 @@ _FAT_BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
              *(f"LPT{i}" for i in range(1, 10))}
 ATTRIBUTION_FILE = "ATTRIBUTION.txt"
+EDITS_FOLDER = "audio_edits"       # where bilateral versions go, apart from the originals
 
 
 class ExportError(Exception):
@@ -305,21 +306,74 @@ def copy_tracks(entries: Sequence, dest_root: str, *, layout: str = "flat", fat:
     return result
 
 
-def processing_transform(chain) -> Callable[[str, str], None]:
+def _has_tag(path: str, key: str) -> bool:
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", f"format_tags={key}",
+                              "-of", "default=nw=1:nk=1", path],
+                             capture_output=True, text=True, timeout=15).stdout
+        return bool(out.strip())
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
+def tags_for(entry, src: str) -> dict:
     """
-    A `transform` for copy_tracks that renders each track through a *private copy*
-    of the live chain, so exporting never disturbs playback and every track starts
-    with the sweep and pulse at phase zero.
+    Tags to write on an exported copy. Ripped and downloaded tracks have authoritative
+    metadata in the library, so it wins. For a user's own file the file's own tags are
+    kept; the library entry (named after the file) only fills in a missing title so the
+    track never shows up nameless.
+    """
+    if entry is None:
+        return {}
+    tags = {"title": entry.title, "artist": entry.creator, "album": entry.album,
+            "album_artist": entry.creator if entry.album else "",
+            "track": str(entry.track) if getattr(entry, "track", 0) else ""}
+    if entry.source == "local":
+        return {} if _has_tag(src, "title") else {"title": entry.title}
+    return tags
+
+
+def processing_transform(chain, entries: Optional[Sequence] = None) -> Callable[[str, str], None]:
+    """
+    A `transform` for copy_tracks that renders each track through a *private copy* of the
+    live chain, so exporting never disturbs playback and every track starts with the sweep
+    and pulse at phase zero. Tags and cover art travel with the audio.
     """
     import copy
 
     from .engine import render_offline
+
+    by_path = {e.path: e for e in entries or []}
 
     def transform(src: str, dst: str) -> None:
         c = copy.deepcopy(chain)
         c.fade_in_s = 0.0
         c.reset_stream()
         c.pan.phase = c.am.phase = 0.0
-        render_offline(c, src, dst)
+        render_offline(c, src, dst, tags=tags_for(by_path.get(src), src))
+
+    return transform
+
+
+def conversion_transform(entries: Optional[Sequence] = None) -> Callable[[str, str], None]:
+    """
+    Convert an original to MP3 with no effects (FLAC won't play in many car stereos).
+    An MP3 source is copied as-is rather than re-encoded, which would only lose quality.
+    """
+    by_path = {e.path: e for e in entries or []}
+
+    def transform(src: str, dst: str) -> None:
+        if src.lower().endswith(".mp3"):
+            shutil.copyfile(src, dst)
+            return
+        overrides = [a for k, v in tags_for(by_path.get(src), src).items() if v
+                     for a in ("-metadata", f"{k}={v}")]
+        res = subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-i", src, "-map", "0:a", "-map", "0:v?",
+             "-map_metadata", "0", "-c:a", "libmp3lame", "-q:a", "2", "-c:v", "copy",
+             "-disposition:v", "attached_pic", "-id3v2_version", "3", "-write_id3v1", "1",
+             *overrides, dst], capture_output=True, text=True, timeout=600)
+        if res.returncode != 0:
+            raise RuntimeError("conversion failed: " + (res.stderr.strip().splitlines() or ["?"])[-1][:200])
 
     return transform

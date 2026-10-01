@@ -15,8 +15,9 @@ DEFAULTS = {
     "rip_dir": os.path.join(DEFAULT_MUSIC_DIR, "Rips"),
     "rip_format": "flac",
     "rip_lookup": True,            # ask MusicBrainz for track names (sends the disc ID)
+    "rip_cover": True,             # embed cover art from the Cover Art Archive (sends the release ID)
     "rip_eject": False,
-    "export_layout": "flat",
+    "export_layout": "album",       # Artist/Album/NN - Title keeps albums in order on a car stereo
     "export_dir": os.path.expanduser("~/Music"),
 }
 

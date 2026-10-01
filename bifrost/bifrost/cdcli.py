@@ -43,6 +43,7 @@ def main(argv=None) -> int:
         p = sub.add_parser(name)
         p.add_argument("--device", help="e.g. /dev/sr0 (default: the first drive)")
         p.add_argument("--no-lookup", action="store_true", help="don't contact MusicBrainz")
+        p.add_argument("--no-cover", action="store_true", help="don't fetch or embed cover art")
     rip = sub.choices["rip"]
     rip.add_argument("--out", default=Settings()["rip_dir"], help="folder to save into")
     rip.add_argument("--format", choices=list(cd.FORMATS), default="flac")
@@ -80,6 +81,13 @@ def main(argv=None) -> int:
             wanted |= set(range(int(lo), int(hi or lo) + 1))
         wanted &= {t.number for t in toc.audio_tracks}
     ext = cd.FORMATS[args.format][0]
+    cover = None
+    if album and album.mbid and not args.no_cover and args.format in cd.COVER_FORMATS:
+        try:
+            cover = musicbrainz.fetch_cover(album.mbid)
+            print("Cover : " + ("found, will be embedded" if cover else "none available for this release"))
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            print(f"Cover : lookup failed ({exc})")
     failures = 0
     for t in toc.audio_tracks:
         if t.number not in wanted:
@@ -90,13 +98,16 @@ def main(argv=None) -> int:
                        album_artist=album.artist if album else "", track=t.number,
                        total=len(toc.audio_tracks), year=album.year if album else "")
         path = cd.track_path(args.out, tags, ext)
+        interactive = sys.stdout.isatty()
         print(f"ripping {t.number:2d}  {tags.title} ...", end=" ", flush=True)
 
         def bar(frac, n=t.number):
-            print(f"\rripping {n:2d}  {tags.title} ... {frac * 100:3.0f}%", end="", flush=True)
+            if interactive:                              # a live percentage only where it can overwrite itself
+                print(f"\rripping {n:2d}  {tags.title} ... {frac * 100:3.0f}%", end="", flush=True)
         try:
-            final = cd.rip_track(drive.device, t, path, args.format, tags, progress=bar)
-            print(f"\rripped  {t.number:2d}  {os.path.relpath(final, args.out)}            ")
+            final = cd.rip_track(drive.device, t, path, args.format, tags, progress=bar, cover=cover)
+            print(f"\rripped  {t.number:2d}  {os.path.relpath(final, args.out)}            " if interactive
+                  else f"ripped  {t.number:2d}  {os.path.relpath(final, args.out)}")
         except cd.CDError as exc:
             failures += 1
             print(f"\rFAILED  {t.number:2d}  {exc}")

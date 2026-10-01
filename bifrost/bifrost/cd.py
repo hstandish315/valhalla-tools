@@ -50,10 +50,12 @@ DISC_STATUS_TEXT = {
 FORMATS: dict[str, tuple[str, list[str]]] = {
     # key: (file extension, ffmpeg codec arguments)
     "flac": ("flac", ["-c:a", "flac", "-compression_level", "8"]),
-    "mp3": ("mp3", ["-c:a", "libmp3lame", "-q:a", "0", "-id3v2_version", "3"]),
+    # ID3v2.3 plus an ID3v1 tag: the combination old car head units read most reliably
+    "mp3": ("mp3", ["-c:a", "libmp3lame", "-q:a", "0", "-id3v2_version", "3", "-write_id3v1", "1"]),
     "opus": ("opus", ["-c:a", "libopus", "-b:a", "128k"]),
     "ogg": ("ogg", ["-c:a", "libvorbis", "-q:a", "5"]),
 }
+COVER_FORMATS = {"flac", "mp3"}                        # ffmpeg can't attach a picture to Ogg/Opus
 FORMAT_LABELS = {"flac": "FLAC (lossless)", "mp3": "MP3 (V0, high quality)",
                  "opus": "Opus (128 kbps)", "ogg": "Ogg Vorbis (q5)"}
 
@@ -242,7 +244,7 @@ def rip_track(device: str, track: TocTrack, out_path: str, fmt: str, tags: Tags,
               progress: Optional[Callable[[float], None]] = None,
               cancel: Optional[Callable[[], bool]] = None,
               source_cmd: Callable[[str, int, str], list[str]] = default_source_cmd,
-              tolerance: float = 1.0) -> str:
+              tolerance: float = 1.0, cover: Optional[bytes] = None) -> str:
     """
     Rip one track to `out_path` (extension chosen from `fmt`) and return the
     final path. Raises CDError with a user-safe message on any failure; partial
@@ -257,6 +259,12 @@ def rip_track(device: str, track: TocTrack, out_path: str, fmt: str, tags: Tags,
     fd, wav = tempfile.mkstemp(prefix=".rip-", suffix=".wav", dir=os.path.dirname(final))
     os.close(fd)
     enc_tmp = wav[:-4] + "." + ext
+    cover_tmp = None
+    if cover and fmt in COVER_FORMATS:
+        kind = "png" if cover[:4] == b"\x89PNG" else "jpg"
+        cover_tmp = wav[:-4] + ".cover." + kind
+        with open(cover_tmp, "wb") as fh:
+            fh.write(cover)
     expected_bytes = max(1, int(track.seconds * PCM_BYTES_PER_SECOND))
     reader = enc = None
     try:
@@ -278,7 +286,10 @@ def rip_track(device: str, track: TocTrack, out_path: str, fmt: str, tags: Tags,
                           f"{track.seconds:.1f}s; the read was incomplete.")
         if progress:
             progress(0.92)
-        enc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-i", wav, "-vn", *codec_args,
+        art = (["-i", cover_tmp, "-map", "0:a", "-map", "1:v", "-c:v", "copy",
+                "-disposition:v", "attached_pic", "-metadata:s:v", "title=Album cover",
+                "-metadata:s:v", "comment=Cover (front)"] if cover_tmp else ["-vn"])
+        enc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-i", wav, *art, *codec_args,
                                 *tags.ffmpeg_args(), enc_tmp],
                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         if _wait(enc, cancel) != 0:
@@ -298,6 +309,6 @@ def rip_track(device: str, track: TocTrack, out_path: str, fmt: str, tags: Tags,
                     proc.wait()
                 if proc.stderr:
                     proc.stderr.close()
-        for p in (wav, enc_tmp):
-            if os.path.exists(p):
+        for p in (wav, enc_tmp, cover_tmp):
+            if p and os.path.exists(p):
                 os.unlink(p)

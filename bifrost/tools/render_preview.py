@@ -113,7 +113,7 @@ def main() -> int:
     chain = Chain(fade_in_s=0.5)
     ctx = app.Context(library=lib, chain=chain, settings=settings)
     ctx.engine = engine.Engine(chain, sink_factory=PacedSilentSink, on_end=ctx._on_track_end)
-    application = app.BifrostApp(fps=30, ctx=ctx)
+    application = app.BifrostApp(fps=30, ctx=ctx, app_id="dev.valhalla.Bifrost.Preview")  # runs beside the real app
     win = lambda: application.props.active_window
 
     def snap(name, window=None):
