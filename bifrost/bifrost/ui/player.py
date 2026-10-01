@@ -154,7 +154,7 @@ class PlayerView(Gtk.Box):
                            step=0.03, on_change=self._on_pulse_freq)
         self.k_depth = knob("Depth", T.AMBER, 0.0, 0.5, 0.25, lambda v: f"{v * 100:.0f}", "%",
                             on_change=self._on_pulse_depth)
-        self.k_vol = knob("Volume", T.SEA, 0.0, 1.0, 0.7, lambda v: f"{v * 100:.0f}", "%",
+        self.k_vol = knob("Volume", T.SEA, 0.0, 1.0, 1.0, lambda v: f"{v * 100:.0f}", "%",
                           on_change=lambda v: setattr(self.chain, "volume", v))
         b.append(knobs)
 

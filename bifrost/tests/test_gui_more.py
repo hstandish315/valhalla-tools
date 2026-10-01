@@ -139,7 +139,7 @@ class TestLiveWiring(Base):
         self.assertEqual(len(rows), 1)
         view.toggle(self.ctx.router.streams()[0])
         self.assertIn(91, self.ctx.router.moved)
-        self.assertIn("1 app", view.state.get_label())
+        self.assertIn("1 stream", view.state.get_label())
         view.toggle(self.ctx.router.streams()[0])
         self.assertEqual(self.ctx.router.moved, set())
         view.toggle_live()

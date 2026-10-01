@@ -26,6 +26,8 @@ from .dsp import SAMPLE_RATE, Chain
 CHANNELS = 2
 BLOCK_FRAMES = 882                      # 20 ms at 44.1 kHz
 BYTES_PER_FRAME = CHANNELS * 4          # float32
+OWN_NODE_NAME = "bifrost-output"        # our player's PipeWire node; Live mode must never capture it
+STALL_MS = 60.0                         # a gap this long between blocks risks an audible glitch
 
 
 class Sink(Protocol):
@@ -41,7 +43,7 @@ class PwPlaySink:
         self._proc = subprocess.Popen(
             ["pw-play", "--raw", "--rate", str(SAMPLE_RATE), "--channels", "2",
              "--format", "f32", "--latency", latency, *target_args,
-             "--media-role", "Music", "-"],
+             "--media-role", "Music", "-P", f"{{ node.name={OWN_NODE_NAME} application.name=Bifrost }}", "-"],
             stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
     @property
@@ -161,6 +163,13 @@ class Engine:
         self._thread: Optional[threading.Thread] = None
         self._decoder: Optional[subprocess.Popen] = None
         self.sink: Optional[Sink] = None
+        # Silence written before the first real block. A real-time source (live capture)
+        # delivers each block just as it is needed, so the player has zero slack and any
+        # tiny delay starves it. Measured: with no pre-fill PipeWire counted 578 underruns
+        # in 25 s; with 60 ms or more, none. File playback is paced by the player itself
+        # (pipe back-pressure) and needs no cushion.
+        self.prime_ms = 0
+        self.stats = {"blocks": 0, "stalls": 0, "max_stall_ms": 0.0}
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------ control ---
@@ -236,13 +245,19 @@ class Engine:
         try:
             sink = self._sink_factory()
             self.sink = sink
+            if self.prime_ms:
+                sink.write(b"\0" * (int(SAMPLE_RATE * self.prime_ms / 1000) * BYTES_PER_FRAME))
             dec = self._spawn_source()
             with self._lock:
                 self._decoder = dec
             assert dec.stdout is not None
             nbytes = BLOCK_FRAMES * BYTES_PER_FRAME
             ended_naturally = False
+            last = None
+            self.stats = {"blocks": 0, "stalls": 0, "max_stall_ms": 0.0}
             while not self._stop.is_set():
+                if not self._run.is_set():
+                    last = None                      # a pause is not a stall
                 self._run.wait()
                 if self._stop.is_set():
                     break
@@ -250,6 +265,14 @@ class Engine:
                 if not raw:
                     ended_naturally = True
                     break
+                now = time.monotonic()
+                if last is not None:
+                    gap = (now - last) * 1000.0
+                    if gap > STALL_MS:
+                        self.stats["stalls"] += 1
+                    self.stats["max_stall_ms"] = max(self.stats["max_stall_ms"], gap)
+                last = now
+                self.stats["blocks"] += 1
                 usable = len(raw) - len(raw) % BYTES_PER_FRAME
                 block = np.frombuffer(raw[:usable], dtype=np.float32).reshape(-1, CHANNELS)
                 out = self.chain.process(block)

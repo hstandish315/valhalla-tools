@@ -21,7 +21,7 @@ REFRESH_MS = 1500
 
 
 class StreamRow(Gtk.Box):
-    def __init__(self, view: "LiveView", stream: live.Stream):
+    def __init__(self, view: "LiveView", stream: live.Stream, followed: bool):
         super().__init__(spacing=12)
         self.set_margin_top(6)
         self.set_margin_bottom(6)
@@ -31,7 +31,7 @@ class StreamRow(Gtk.Box):
         text.append(label(stream.media or "playing audio", ["status"], ellipsize=True))
         self.append(text)
         if stream.routed:
-            tag = label("THROUGH BIFROST", ["badge"])
+            tag = label("THROUGH BIFROST" + ("  ·  FOLLOWS NEW TRACKS" if followed else ""), ["badge"])
             tag.set_valign(Gtk.Align.CENTER)
             self.append(tag)
         btn = Gtk.Button(label="Return to speakers" if stream.routed else "Send to Bifrost")
@@ -39,6 +39,25 @@ class StreamRow(Gtk.Box):
         if not stream.routed:
             btn.add_css_class("primary")
         btn.connect("clicked", lambda *_: view.toggle(stream))
+        self.append(btn)
+
+
+class WaitingRow(Gtk.Box):
+    """An app we're following that isn't playing at the moment."""
+
+    def __init__(self, view: "LiveView", name: str):
+        super().__init__(spacing=12)
+        self.set_margin_top(6)
+        self.set_margin_bottom(6)
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        text.set_hexpand(True)
+        text.append(label(name, ["dim"], ellipsize=True))
+        text.append(label("Not playing. It will go through Bifrost as soon as it does.",
+                          ["status", "mute"], ellipsize=True))
+        self.append(text)
+        btn = Gtk.Button(label="Stop following")
+        btn.set_valign(Gtk.Align.CENTER)
+        btn.connect("clicked", lambda *_: view.forget(name))
         self.append(btn)
 
 
@@ -77,10 +96,14 @@ class LiveView(Gtk.Box):
         b.append(sw)
         self.empty = label("", ["status", "mute"], wrap=True)
         b.append(self.empty)
+        self.health = label("", ["status"], wrap=True)
+        b.append(self.health)
         b.append(label("Tip: you can also pick “Bifrost Live” as the output device in Settings → Sound "
-                       "for any app. Expect about 0.1–0.2 s of added delay, so video lip-sync will drift; "
+                       "for any app. Expect about 0.2 s of added delay, so video lip-sync will drift; "
                        "it's best for music.", ["status", "mute"], wrap=True))
         self.append(card)
+        # a followed app opened a new stream: refresh from the UI thread
+        ctx.router.on_change = lambda: GLib.idle_add(self.sync)
         self.connect("map", lambda *_: self._start_timer())
         self.connect("unmap", lambda *_: self._stop_timer())
         self.sync()
@@ -95,31 +118,57 @@ class LiveView(Gtk.Box):
 
     def toggle(self, stream: live.Stream) -> None:
         try:
-            (self.ctx.router.restore if stream.routed else self.ctx.router.move)(stream.node_id)
+            streams = self.ctx.router.streams(self.ctx.live.own_pids)
+            if stream.routed:
+                self.ctx.router.release(stream, streams)
+            else:
+                self.ctx.router.send(stream, streams)
         except live.LiveError as exc:
             self.ctx.status(str(exc), error=True)
         self.sync()
 
-    def sync(self) -> None:
+    def forget(self, name: str) -> None:
+        self.ctx.router.forget(name)
+        self.sync()
+
+    def sync(self) -> bool:
         running = self.ctx.live_running
         self.btn.set_label("Stop live mode" if running else "Start live mode")
         self.list.remove_all()
+        self.health.set_label("")
         if not running:
             self.state.set_label("Off. Start live mode, then send an app to Bifrost.")
             self.empty.set_label("")
-            return
+            return False
         try:
+            streams = self.ctx.router.streams(self.ctx.live.own_pids)
+            self.ctx.router.follow(streams)             # safety net behind the instant watcher
             streams = self.ctx.router.streams(self.ctx.live.own_pids)
         except live.LiveError as exc:
             self.state.set_label(str(exc))
-            return
+            return False
+        sticky = dict(self.ctx.router.sticky)
         routed = sum(1 for s in streams if s.routed)
-        self.state.set_label(f"Live mode is on. {routed} app{'s' if routed != 1 else ''} going through Bifrost.")
+        self.state.set_label(f"Live mode is on. {routed} stream{'s' if routed != 1 else ''} going through Bifrost.")
         for s in streams:
-            self.list.append(StreamRow(self, s))
-        self.empty.set_label("" if streams else
+            self.list.append(StreamRow(self, s, any(s.tokens & t for t in sticky.values())))
+        playing = {name for name, toks in sticky.items() if any(s.tokens & toks for s in streams)}
+        for name in sticky:
+            if name not in playing:
+                self.list.append(WaitingRow(self, name))
+        self.empty.set_label("" if (streams or sticky) else
                              "Nothing is playing right now. Start music in Spotify or your browser; "
                              "it will appear here.")
+        st = self.ctx.live.stats
+        if st["stalls"]:
+            self.health.set_label(f"Audio hiccups: {st['stalls']} (worst gap {st['max_stall_ms']:.0f} ms). "
+                                  f"If you hear static, close heavy apps or lower the volume of the "
+                                  f"source, and tell me the numbers.")
+            self.health.add_css_class("error")
+        else:
+            self.health.set_label(f"Audio health: no hiccups ({st['blocks']} blocks processed).")
+            self.health.remove_css_class("error")
+        return False
 
     # ------------------------------------------------------------ refresh ---
     def _start_timer(self) -> None:

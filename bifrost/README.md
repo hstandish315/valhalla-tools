@@ -28,7 +28,7 @@ decompiled or taken. Compared with the apps surveyed:
 | Bilateral cue | volume swap | volume **+ inter-ear delay (≤0.7 ms) + far-ear head shadow** |
 | Modulation | fixed | pulse rate 8–40 Hz, depth, in-phase or alternating L/R |
 | Control | presets | presets **and** every parameter live |
-| Safety | — | soft limiter at −3 dBFS, fade-in, volume cap, session fade-out |
+| Safety | — | soft limiter at −0.5 dBFS (peaks only), fade-in, volume trim, session fade-out |
 | Privacy | account, telemetry | fully local, no account |
 | Attribution | — | license, author and source kept with every track |
 
@@ -60,6 +60,12 @@ Requires `ffmpeg`, `ffprobe`, PipeWire (`pw-play`, `pw-record`, `pw-cli`, `pw-du
 Pick a preset (Focus, Deep Work, Calm, Reset) and adjust. *Sweep* moves the sound
 left↔right; *Realism* scales the inter-ear delay and head shadow; *Pulse* is the
 amplitude modulation. **Session** runs a timer that fades out gently at the end.
+
+**Levels:** the defaults keep music at its original loudness. This was measured, because an
+earlier version made music 6.5 dB quieter (a built-in 0.7 volume, a 3.5 dB loss in the
+mono-sum and pan stage, and a limiter that flattened loud masters). Focus now changes
+loudness by about −0.5 dB, and the Volume knob is a 100%-by-default trim; your system
+volume is the real control.
 
 ### Browse — free music, with an honest search
 Search **Openverse** or the **Internet Archive**; only Creative Commons /
@@ -126,7 +132,14 @@ Bifrost on its way to your speakers.
 ![Live](docs/live.png)
 
 Press **Start live mode**, then **Send to Bifrost** next to an app. Press
-**Return to speakers** or stop, and it goes straight back. Under the hood:
+**Return to speakers** or stop, and it goes straight back.
+
+**Apps are followed, not just streams.** Spotify opens a *new* audio stream for each
+track or restart, and its streams don't even agree on a name (one calls itself
+"Spotify", another "Chromium"). Once you send an app, Bifrost remembers it by identity
+(binary, name, Flatpak ID) and moves every later stream of that app the instant it
+appears (measured: 0.01 s). Bifrost's own player is recognised by name and never
+offered, so it can't be sent through itself. Under the hood:
 
 ```
 app ──▶ [Bifrost Live] virtual sink ──monitor──▶ pw-record ──▶ DSP ──▶ pw-play ──▶ speakers
@@ -137,8 +150,10 @@ app ──▶ [Bifrost Live] virtual sink ──monitor──▶ pw-record ─�
   moved app is returned first.
 - The output is always an explicit real device, never the virtual sink, so it can't
   feed back into itself.
-- **Costs:** about 0.1–0.2 s of added delay, so video lip-sync will drift (it's best
-  for music), and you control playback from the other app (no seeking in Bifrost).
+- **Costs:** about 0.2 s of added delay, so video lip-sync will drift (it's best for
+  music), and you control playback from the other app (no seeking in Bifrost).
+- **Audio health** is shown on the Live tab: it counts any stall between audio blocks,
+  so if you hear a glitch you can see whether Bifrost saw it.
 - Nothing is extracted from the app or written to disk; whether a service's terms
   permit routing its audio through an effects processor is for you to check.
 - You can also pick "Bifrost Live" as the output device in Settings → Sound.
@@ -154,6 +169,11 @@ file ──ffmpeg──▶ f32 PCM ──▶ Pan ──▶ AmpMod ──▶ volu
 - **No PortAudio.** Its open/close churn through PipeWire's ALSA shim segfaulted in
   testing. Every audio edge is a subprocess instead, so there is no callback to
   race; stopping is `kill()`.
+- **A cushion for live audio.** Live capture hands over each block just as it is needed,
+  so the output player has no slack and any tiny delay starves it. Measured on the real
+  graph: with no pre-fill PipeWire counted **578 underruns in 25 s** (static); with 60 ms
+  of silence written first, **0**. Live mode pre-fills 100 ms. File playback is paced by
+  the player and needs none.
 - **Chunk-invariant DSP.** Phase and filter history carry across ~20 ms blocks, so
   parameter changes land within ~0.2 s with no clicks; tests assert that one-block
   and many-block processing are identical.
@@ -177,11 +197,15 @@ Verified on real hardware while building this:
   **Safely remove drive** step powered the stick off.
 - **Live mode** against the real PipeWire graph: virtual sink, rerouting a running
   stream, capturing a 440 Hz tone back at 443 Hz, restoring the stream to the real
-  output, and cleanup after exit.
+  output, and cleanup after exit. With a real Spotify session and the GUI running for
+  about 60 s: 0 underruns on any Bifrost node, no stalls, no clicks or dropouts in the
+  processed audio, and Spotify returned to the speakers afterwards. A followed app's new
+  stream is moved automatically on the real graph (opt-in `TestRealFollow`).
 
 **Not** verified: exporting to a FAT or exFAT stick (the FAT 4 GiB and name rules
-are unit-tested; only NTFS was available), live mode with a real Spotify stream
-(tested with a `pw-play` stream), and the sound itself on headphones.
+are unit-tested; only NTFS was available), Spotify actually changing track *while*
+followed (a Spotify-shaped new stream was simulated instead), and the sound itself on
+headphones.
 
 ## Layout
 

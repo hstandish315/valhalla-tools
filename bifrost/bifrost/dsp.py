@@ -100,7 +100,10 @@ class Pan:
         n = len(x)
         if n == 0:
             return x
-        mono = x.astype(np.float64).mean(axis=1)
+        # (L+R)/sqrt(2), not the plain average: with the constant-power pan law each ear then
+        # gets (L+R)/2 at centre, which for a mono source is exactly its original level and for
+        # typical wide stereo is within ~0.5 dB. The plain average came out 3.5 dB quieter.
+        mono = x.astype(np.float64).sum(axis=1) / math.sqrt(2.0)
 
         w = TWO_PI * self.rate / self.sr
         phases = self.phase + w * np.arange(n)
@@ -182,10 +185,13 @@ class Limiter:
     """
     Memoryless soft limiter. Transparent below the knee, then a tanh shoulder
     that approaches the ceiling asymptotically, so the output never exceeds it.
-    Default ceiling is -3 dBFS, leaving headroom for the amplitude modulation.
+
+    The ceiling (-0.5 dBFS) and knee are set so normal music passes untouched: an
+    earlier -3 dBFS ceiling squashed the peaks of any loud, modern master (3.8% of
+    samples on one test track) even with every effect off.
     """
 
-    def __init__(self, ceiling_db: float = -3.0, knee: float = 0.8):
+    def __init__(self, ceiling_db: float = -0.5, knee: float = 0.9):
         self.ceiling = 10.0 ** (ceiling_db / 20.0)
         self.knee = knee
 
@@ -216,7 +222,8 @@ class Chain:
         self.pan = Pan(sr)
         self.am = AmpMod(sr)
         self.limiter = Limiter()
-        self.volume = 0.7           # master, 0 - 1; also the user's volume cap
+        self.volume = 1.0           # a trim, 0 - 1, unity by default: the system volume is the
+                                    # real control, and a built-in cut made Bifrost sound quieter
         self.pan_enabled = True
         self.am_enabled = True
         self.fade_in_s = fade_in_s

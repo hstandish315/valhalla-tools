@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
@@ -93,6 +94,26 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(live.missing_tools(lambda t: None if t == "pw-cli" else "/bin/x"), ["pw-cli"])
 
 
+class QuietWatcher:
+    """A fake `pw-dump -m` that reports nothing and blocks until it is killed."""
+
+    def __init__(self):
+        self.stdout, self.killed, self._stop = self, False, threading.Event()
+
+    def read(self, n):
+        self._stop.wait(5)
+        return b""
+
+    def poll(self): return 0 if self.killed else None
+
+    def kill(self):
+        self.killed = True
+        self._stop.set()
+
+    def wait(self, timeout=None): return 0
+    def close(self): pass
+
+
 class FakePipeWire:
     """Stands in for runner + popen: records commands and simulates the graph."""
 
@@ -108,6 +129,8 @@ class FakePipeWire:
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     def popen(self, cmd, **kw):
+        if cmd[:2] == ["pw-dump", "-m"]:
+            return QuietWatcher()
         fake = self
 
         class Cli:
@@ -317,7 +340,7 @@ class TestRealPipeWire(unittest.TestCase):
             deadline, stream = time.time() + 6, None
             while time.time() < deadline and stream is None:
                 time.sleep(0.3)
-                stream = next((s for s in router.streams() if s.app == "pw-play"), None)
+                stream = next((s for s in router.streams() if s.app.lower() == "pw-play"), None)
             self.assertIsNotNone(stream, "the test tone's stream never appeared")
             router.move(stream.node_id)
             eng.start()

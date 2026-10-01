@@ -72,8 +72,8 @@ class TestPan(unittest.TestCase):
         x = noise(0.5)
         y = p.process(x)
         np.testing.assert_allclose(y[:, 0], y[:, 1], atol=1e-6)
-        # mono-sum of the source, aligned to the FIR group delay (15 samples)
-        ref = x.mean(axis=1)
+        # level-matched mono sum of the source, aligned to the FIR group delay (15 samples)
+        ref = x.astype(np.float64).sum(axis=1) / math.sqrt(2.0)
         np.testing.assert_allclose(y[15:, 0] ** 2 + y[15:, 1] ** 2,
                                    ref[:-15] ** 2, atol=1e-5)
 
@@ -125,7 +125,9 @@ class TestPan(unittest.TestCase):
         for shape in ("sine", "triangle", "pingpong"):
             p = dsp.Pan(shape=shape, rate=2.0)
             y = p.process(noise(1.0))
-            self.assertLessEqual(np.abs(y).max(), 0.5 + 1e-3, shape)
+            # level-matching lets the near ear reach sqrt(2) x the input peak at the extreme of a
+            # sweep (+3 dB); that is the price of keeping the *average* level where it was
+            self.assertLessEqual(np.abs(y).max(), 0.5 * math.sqrt(2.0) + 1e-3, shape)
 
 
 class TestAmpMod(unittest.TestCase):
