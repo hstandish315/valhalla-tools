@@ -114,6 +114,12 @@ a truncated track that looks finished. Creative Commons tracks get an
 `ATTRIBUTION.txt` beside them. Tracks under a **no-derivatives** license can be
 copied but not exported as processed versions.
 
+The export dialog also offers to **skip tracks under 10 seconds** (on by default when there
+are any), and the **Library has a "Tick short tracks" button** so a pile of silent tracks can be
+ticked and removed in one go. The layout you last *picked* is remembered; an untouched default
+is not, so a layout chosen long ago can't quietly override a better one. If several tracks in
+one export would get the same name, they get their track numbers instead of `(2)`, `(3)`.
+
 Re-exporting is safe: tracks already at the destination are skipped, and a bilateral version
 re-rendered with new settings *replaces* its earlier version in `audio_edits` instead of piling
 up `(2)` copies.
@@ -142,6 +148,10 @@ editable; a disc MusicBrainz doesn't know is still rippable.
 - Untick *Look up names on MusicBrainz* to keep the disc ID off the network, and
   *Embed cover art* to keep the release ID off it too.
 - Data tracks on mixed-mode discs are shown but can't be ripped as audio.
+- **Silent filler tracks start unticked.** Some discs carry runs of inaudible tracks (one famous
+  album has 82 four-second `[silence]` tracks, then a hidden 99-second track). Anything under
+  10 seconds, or called "silence" by MusicBrainz, is unticked with a "silence?" marker and a
+  note; hidden songs stay ticked, and *Select all* still lets you have them.
 - Rip discs you own; copyright rules differ by country.
 
 `./bifrost-audio cd info` is a read-only way to check a drive; `cd rip` rips from
@@ -246,6 +256,12 @@ against a folder standing in for one and through the real widgets; the earlier r
 run covered the original-file mode), exporting to a FAT or exFAT stick (the FAT 4 GiB and name rules
 are unit-tested; only NTFS was available) and how comfortable the default 16 Hz pulse
 depth is over long sessions (it is a starting point; every parameter stays live).
+
+## Platforms
+
+Linux only today (developed on Ubuntu with PipeWire). A Windows version has been scoped but not
+started; [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) holds everything needed to pick it up on a
+Windows machine: what is portable, the interfaces to build, the research and a test checklist.
 
 ## Layout
 

@@ -28,6 +28,7 @@ WINDOWS_TYPES = {"exfat", "ntfs", "ntfs3", "fuseblk"}
 _FAT_BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
              *(f"LPT{i}" for i in range(1, 10))}
+FILLER_SECONDS = 10.0               # tracks shorter than this are almost always silence/padding
 ATTRIBUTION_FILE = "ATTRIBUTION.txt"
 EDITS_FOLDER = "audio_edits"       # where bilateral versions go, apart from the originals
 
@@ -136,11 +137,23 @@ def _component(name: str, fat: bool) -> str:
     return fat_safe(name) if fat else name
 
 
-def destination(entry, root: str, layout: str, fat: bool, ext: Optional[str] = None) -> str:
-    """Where `entry` goes under `root`. Layouts: flat | artist | album."""
+def is_short(entry) -> bool:
+    """A track under FILLER_SECONDS (CDs often carry runs of 4-second silent tracks)."""
+    return 0 < (getattr(entry, "duration", 0) or 0) < FILLER_SECONDS
+
+
+def destination(entry, root: str, layout: str, fat: bool, ext: Optional[str] = None,
+                disambiguate: bool = False) -> str:
+    """
+    Where `entry` goes under `root`. Layouts: flat | artist | album. With `disambiguate`
+    the track number is added to the title, used when several tracks in one export would
+    otherwise get the same name (instead of an anonymous "(2)", "(3)").
+    """
     src_ext = ext or os.path.splitext(entry.path)[1].lstrip(".").lower() or "mp3"
+    num = getattr(entry, "track", 0)
+    shown = f"{entry.title} ({num:02d})" if disambiguate and num else entry.title
     artist = _component(entry.creator or "Unknown Artist", fat)
-    title = _component(entry.title, fat)
+    title = _component(shown, fat)
     if layout == "album":
         album = _component(getattr(entry, "album", "") or "Singles", fat)
         n = getattr(entry, "track", 0)
@@ -149,7 +162,7 @@ def destination(entry, root: str, layout: str, fat: bool, ext: Optional[str] = N
         return os.path.join(root, artist, album, f"{name}.{src_ext}")
     if layout == "artist":
         return os.path.join(root, artist, f"{title}.{src_ext}")
-    flat = _component(f"{entry.creator} - {entry.title}" if entry.creator else entry.title, fat)
+    flat = _component(f"{entry.creator} - {shown}" if entry.creator else shown, fat)
     return os.path.join(root, f"{flat}.{src_ext}")
 
 
@@ -272,10 +285,19 @@ def copy_tracks(entries: Sequence, dest_root: str, *, layout: str = "flat", fat:
 
     done = 0
     landed = []                                   # entries now present at the destination
+    # Several tracks in this export may map to one name (e.g. a CD's run of "[silence]" tracks
+    # under the flat layout). Give those their track numbers instead of anonymous "(2)", "(3)".
+    out_ext = transform_ext if transform else None
+    planned = {e.path: destination(e, dest_root, layout, safe, out_ext) for e in todo}
+    seen: dict[str, int] = {}
+    for p in planned.values():
+        seen[p.lower()] = seen.get(p.lower(), 0) + 1
     for e in todo:
         if cancel and cancel():
             raise ExportError("cancelled")
-        dst = destination(e, dest_root, layout, safe, transform_ext if transform else None)
+        dst = planned[e.path]
+        if seen[dst.lower()] > 1 and getattr(e, "track", 0):
+            dst = destination(e, dest_root, layout, safe, out_ext, disambiguate=True)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         if (not transform and os.path.exists(dst) and os.path.getsize(dst) == sizes[e.path]):
             result.skipped.append((e.title, "already there"))

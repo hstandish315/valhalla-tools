@@ -110,10 +110,19 @@ class ExportDialog(Gtk.Window):
         lrow.append(label("Names", ["dim"]))
         self.dd_layout = Gtk.DropDown.new_from_strings([t for _, t in LAYOUTS])
         keys = [k for k, _ in LAYOUTS]
-        self.dd_layout.set_selected(keys.index(ctx.settings["export_layout"])
-                                    if ctx.settings["export_layout"] in keys else 0)
+        chosen = ctx.settings["export_layout_choice"]
+        self.dd_layout.set_selected(keys.index(chosen) if chosen in keys else keys.index("album"))
+        self.dd_layout.connect("notify::selected", self._on_layout_picked)   # remember only real choices
         lrow.append(self.dd_layout)
         box.append(lrow)
+
+        # CDs often carry runs of 4-second silent tracks; exporting them clutters a car stereo.
+        self.short = [e for e in self.entries if export.is_short(e)]
+        self.chk_skip = Gtk.CheckButton(label=f"Skip {len(self.short)} track{'s' if len(self.short) != 1 else ''} "
+                                              f"under {export.FILLER_SECONDS:.0f} seconds (probably silence)")
+        self.chk_skip.set_active(True)
+        self.chk_skip.set_visible(bool(self.short))
+        box.append(self.chk_skip)
 
         self.bar = Gtk.ProgressBar()
         self.bar.set_visible(False)
@@ -214,7 +223,11 @@ class ExportDialog(Gtk.Window):
         if self._busy:
             return
         layout = LAYOUTS[self.dd_layout.get_selected()][0]
-        self.ctx.settings.set("export_layout", layout)
+        entries = [e for e in self.entries if not (self.short and self.chk_skip.get_active() and export.is_short(e))]
+        if not entries:
+            self._say("Nothing to export: every track is under "
+                      f"{export.FILLER_SECONDS:.0f} seconds. Untick the skip option to include them.", error=True)
+            return
         vol = None
         if self.use_usb:
             if not self.volumes:
@@ -232,9 +245,12 @@ class ExportDialog(Gtk.Window):
         self.bar.set_fraction(0.0)
         self._say("Starting…")
         threading.Thread(target=self._work, daemon=True, name="bifrost-export",
-                         args=(vol, layout, fmt, self.mode, self.folder)).start()
+                         args=(vol, layout, fmt, self.mode, self.folder, entries)).start()
 
-    def _work(self, vol, layout, fmt, mode, folder) -> None:
+    def _on_layout_picked(self, dd, _pspec) -> None:
+        self.ctx.settings.set("export_layout_choice", LAYOUTS[dd.get_selected()][0])
+
+    def _work(self, vol, layout, fmt, mode, folder, entries) -> None:
         try:
             # Bilateral versions get a folder of their own, apart from the originals.
             if vol is not None:
@@ -245,14 +261,14 @@ class ExportDialog(Gtk.Window):
                 dest = os.path.join(folder, export.EDITS_FOLDER) if mode == "bilateral" else folder
                 fat, safe = False, False
             os.makedirs(dest, exist_ok=True)
-            transform = (export.processing_transform(self.ctx.chain, self.entries) if mode == "bilateral"
-                         else export.conversion_transform(self.entries) if mode == "mp3" else None)
+            transform = (export.processing_transform(self.ctx.chain, entries) if mode == "bilateral"
+                         else export.conversion_transform(entries) if mode == "mp3" else None)
             out_ext = fmt if mode == "bilateral" else "mp3" if mode == "mp3" else None
 
             def prog(done, total, name):
                 GLib.idle_add(self._progress, done, total, name)
 
-            res = export.copy_tracks(self.entries, dest, layout=layout, fat=fat, safe_names=safe, transform=transform,
+            res = export.copy_tracks(entries, dest, layout=layout, fat=fat, safe_names=safe, transform=transform,
                                      transform_ext=out_ext, replace_existing=(mode == "bilateral"),
                                      progress=prog,
                                      cancel=self._cancel.is_set)

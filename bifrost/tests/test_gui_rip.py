@@ -47,18 +47,22 @@ def pump(cond, timeout=20.0):
     return False
 
 
+TRACK_SECONDS = 12            # realistic: under 10 s a track is treated as silent padding and starts unticked
+
+
 def ffmpeg_source(sleep=0.0):
     def cmd(device, track, wav):
         gen = (f"sleep {sleep}; " if sleep else "") + \
-              f"ffmpeg -v error -y -f lavfi -i sine=frequency=330:sample_rate=44100:duration=3 " \
+              f"ffmpeg -v error -y -f lavfi -i sine=frequency=330:sample_rate=44100:duration={TRACK_SECONDS} " \
               f"-ac 2 -c:a pcm_s16le '{wav}'"
         return ["sh", "-c", gen]
     return cmd
 
 
 def toc3(data_last=False):
-    tracks = [cd.TocTrack(1, 0, 225), cd.TocTrack(2, 225, 225), cd.TocTrack(3, 450, 225, is_data=data_last)]
-    return cd.Toc(tracks, 675)
+    n = TRACK_SECONDS * 75
+    tracks = [cd.TocTrack(1, 0, n), cd.TocTrack(2, n, n), cd.TocTrack(3, 2 * n, n, is_data=data_last)]
+    return cd.Toc(tracks, 3 * n)
 
 
 ALBUM = None

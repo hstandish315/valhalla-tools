@@ -18,7 +18,8 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk  # noqa: E402
 
-from .. import cd, musicbrainz  # noqa: E402
+from .. import cd, export, musicbrainz  # noqa: E402
+from ..sources.match import norm  # noqa: E402
 from .. import theme as T  # noqa: E402
 from .export_dialog import ExportDialog, open_folder  # noqa: E402
 from .player import fmt_time, label  # noqa: E402
@@ -27,10 +28,16 @@ from .widgets import Card  # noqa: E402
 FORMAT_KEYS = list(cd.FORMATS)
 
 
+def looks_like_filler(seconds: float, title: str) -> bool:
+    """Silent padding tracks: very short, or MusicBrainz itself calls them "silence"."""
+    return seconds < export.FILLER_SECONDS or norm(title) == "silence"
+
+
 class RipRow(Gtk.Box):
     def __init__(self, track: cd.TocTrack, title: str):
         super().__init__(spacing=10)
         self.track = track
+        self.filler = False
         self.set_margin_top(4)
         self.set_margin_bottom(4)
         self.check = Gtk.CheckButton()
@@ -55,6 +62,13 @@ class RipRow(Gtk.Box):
     def say(self, text: str, error: bool = False) -> None:
         self.state.set_label(text)
         (self.state.add_css_class if error else self.state.remove_css_class)("error")
+
+    def set_filler(self, flag: bool) -> None:
+        """Mark a (probably) silent padding track: start it unticked, with a visible reason."""
+        self.filler = flag
+        if not self.track.is_data:
+            self.check.set_active(not flag)
+            self.say("silence?" if flag else "")
 
 
 class RipView(Gtk.Box):
@@ -227,9 +241,12 @@ class RipView(Gtk.Box):
             row = RipRow(t, f"Track {t.number}")
             self.rows.append(row)
             self.list.append(row)
+        for row in self.rows:
+            row.set_filler(row.track.seconds < export.FILLER_SECONDS)
         n = len(toc.audio_tracks)
         self._note(f"{n} audio track{'s' if n != 1 else ''}, {toc.minutes:.0f} min. "
-                   + ("Looking up names…" if self.ctx.settings["rip_lookup"] else "Type the names in."))
+                   + ("Looking up names…" if self.ctx.settings["rip_lookup"] else "Type the names in.")
+                   + self._filler_note())
         self._sync_buttons()
         return False
 
@@ -246,8 +263,17 @@ class RipView(Gtk.Box):
             info = album.track(row.track.number)
             if info and not row.track.is_data:
                 row.title.set_text(info.title)
-        self._note(f"Matched “{album.title}” by {album.artist} on MusicBrainz. Check the names, then rip.")
+        for row in self.rows:
+            if not row.track.is_data:
+                row.set_filler(looks_like_filler(row.track.seconds, row.title.get_text()))
+        self._note(f"Matched “{album.title}” by {album.artist} on MusicBrainz. Check the names, then rip."
+                   + self._filler_note())
         return False
+
+    def _filler_note(self) -> str:
+        n = sum(1 for r in self.rows if r.filler and not r.track.is_data)
+        return (f"  {n} very short or silent track{'s are' if n != 1 else ' is'} unticked "
+                f"(tick them yourself if you want them).") if n else ""
 
     def _cover_ready(self, gen, cover):
         if gen == self._gen:

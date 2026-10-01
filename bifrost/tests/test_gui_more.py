@@ -211,9 +211,9 @@ class TestBrowseHonesty(Base):
 @unittest.skipUnless(HAVE_DISPLAY and shutil.which("ffmpeg"), "needs a display and ffmpeg")
 class TestExportDialog(Base):
     def entries(self):
-        a = self.tone_entry("a.mp3", 2, title="What? Why", creator="AC/DC", license="CC BY 4.0",
+        a = self.tone_entry("a.mp3", 12, title="What? Why", creator="AC/DC", license="CC BY 4.0",
                             attribution='"What? Why" by AC/DC, CC BY 4.0')
-        b = self.tone_entry("b.mp3", 2, title="Second", creator="Band", album="LP", track=2)
+        b = self.tone_entry("b.mp3", 12, title="Second", creator="Band", album="LP", track=2)
         return [a, b]
 
     def run_export(self, dlg):
@@ -282,7 +282,7 @@ class TestExportDialog(Base):
     def test_no_derivatives_tracks_are_skipped_in_processed_mode_with_a_visible_reason(self):
         dest = os.path.join(self.tmp, "nd")
         os.makedirs(dest)
-        nd = self.tone_entry("nd.mp3", 2, title="ND Song", license="CC BY-ND 4.0")
+        nd = self.tone_entry("nd.mp3", 12, title="ND Song", license="CC BY-ND 4.0")
         dlg = ExportDialog(self.ctx, [nd], "folder")
         dlg.folder = dest
         dlg.btn_proc.set_active(True)
@@ -305,15 +305,18 @@ class TestExportDialog(Base):
         self.assertTrue(pump(lambda: not dlg._busy, 20))
         self.assertEqual([f for _, _, fs in os.walk(dest) for f in fs if f.endswith(".mp3")], [])
 
-    def test_settings_remember_the_chosen_layout(self):
+    def test_settings_remember_a_layout_the_user_actually_picked(self):
         dest = os.path.join(self.tmp, "lay")
         os.makedirs(dest)
         dlg = ExportDialog(self.ctx, self.entries(), "folder")
         dlg.folder = dest
-        dlg.dd_layout.set_selected(2)                               # Artist / Album / Title
+        dlg.dd_layout.set_selected(1)                               # Artist / Title (not the default)
+        self.assertEqual(self.settings["export_layout_choice"], "artist")
         self.run_export(dlg)
-        self.assertEqual(self.settings["export_layout"], "album")
-        self.assertTrue(os.path.exists(os.path.join(dest, "Band", "LP", "02 - Second.mp3")))
+        self.assertTrue(os.path.exists(os.path.join(dest, "Band", "Second.mp3")))
+        again = ExportDialog(self.ctx, self.entries(), "folder")      # the next dialog opens on that choice
+        from bifrost.ui.export_dialog import LAYOUTS
+        self.assertEqual(LAYOUTS[again.dd_layout.get_selected()][0], "artist")
 
 
 def export_dialog_folder() -> str:

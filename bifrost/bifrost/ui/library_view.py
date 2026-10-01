@@ -10,6 +10,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk  # noqa: E402
 
 from .. import theme as T  # noqa: E402
+from .. import export  # noqa: E402
 from .export_dialog import ExportDialog  # noqa: E402
 from .player import fmt_time, label  # noqa: E402
 from .widgets import Card  # noqa: E402
@@ -89,6 +90,11 @@ class LibraryView(Gtk.Box):
         self.btn_all = Gtk.Button(label="Select all")
         self.btn_all.connect("clicked", self._on_toggle_all)
         bar.append(self.btn_all)
+        self.btn_short = Gtk.Button(label="Tick short tracks")
+        self.btn_short.set_tooltip_text(f"Tick every track under {export.FILLER_SECONDS:.0f} seconds (usually silent "
+                                        f"padding from a CD), so Remove can clear them.")
+        self.btn_short.connect("clicked", self._on_tick_short)
+        bar.append(self.btn_short)
         self.count = label("", ["status"], xalign=1.0)
         self.count.set_hexpand(True)
         bar.append(self.count)
@@ -145,6 +151,13 @@ class LibraryView(Gtk.Box):
         self._bulk = False
         self._on_select()
 
+    def _on_tick_short(self, _btn) -> None:
+        self._bulk = True
+        for r in self._rows():
+            r.check.set_active(export.is_short(r.entry))
+        self._bulk = False
+        self._on_select()
+
     def _on_toggle_all(self, _btn) -> None:
         self._set_all(len(self.selected_entries()) < len(self.ctx.library.entries))
 
@@ -161,6 +174,9 @@ class LibraryView(Gtk.Box):
         self.btn_folder.set_label(f"Save copies… {scope}")
         self.btn_usb.set_label(f"Export to USB… {scope}")
         self.btn_all.set_label("Select none" if sel and len(sel) == total else "Select all")
+        n_short = sum(1 for e in self.ctx.library.entries if export.is_short(e))
+        self.btn_short.set_visible(n_short > 0)
+        self.btn_short.set_label(f"Tick short tracks ({n_short})")
         if len(sel) == 1:
             e = sel[0]
             parts = [e.attribution or f"{e.title} — {e.license}", e.landing_url, e.path]

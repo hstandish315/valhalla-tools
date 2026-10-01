@@ -17,7 +17,9 @@ DEFAULTS = {
     "rip_lookup": True,            # ask MusicBrainz for track names (sends the disc ID)
     "rip_cover": True,             # embed cover art from the Cover Art Archive (sends the release ID)
     "rip_eject": False,
-    "export_layout": "album",       # Artist/Album/NN - Title keeps albums in order on a car stereo
+    # Only set when the user *picks* a layout. It used to be saved on every export, so the old
+    # default ("flat") was silently remembered as a choice and overrode the better new one.
+    "export_layout_choice": "",
     "export_dir": os.path.expanduser("~/Music"),
 }
 

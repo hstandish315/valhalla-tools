@@ -63,7 +63,7 @@ class Base(unittest.TestCase):
         out = []
         for i in range(1, n + 1):
             p = os.path.join(self.tmp, f"{i:02d}.flac")
-            ff("-f", "lavfi", "-i", f"sine=frequency={300 + 50 * i}:duration=2", "-i", self.cover,
+            ff("-f", "lavfi", "-i", f"sine=frequency={300 + 50 * i}:duration=12", "-i", self.cover,
                "-map", "0:a", "-map", "1:v", "-c:a", "flac", "-c:v", "copy", "-disposition:v", "attached_pic",
                "-metadata", f"title=Song {i}", "-metadata", "artist=P!nk", "-metadata", "album=Can’t Take Me Home",
                "-metadata", f"track={i}/{n}", p)
@@ -153,7 +153,7 @@ class TestCarScenario(Base):
     def test_creative_commons_attribution_travels_into_audio_edits(self):
         d, vol = self.stick()
         p = os.path.join(self.tmp, "cc.mp3")
-        ff("-f", "lavfi", "-i", "sine=duration=2", p)
+        ff("-f", "lavfi", "-i", "sine=duration=12", p)
         e = self.lib.add_local(p)
         e.license, e.attribution, e.title, e.creator = "CC BY 4.0", "line for the CC track", "CC", "Someone"
         e.source = "openverse"

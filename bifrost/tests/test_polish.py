@@ -430,7 +430,7 @@ class TestDefaults(unittest.TestCase):
     def test_settings_defaults(self):
         from bifrost.settings import DEFAULTS
         self.assertTrue(DEFAULTS["rip_cover"])
-        self.assertEqual(DEFAULTS["export_layout"], "album")
+        self.assertEqual(DEFAULTS["export_layout_choice"], "", "no remembered layout until the user picks one")
 
     def test_edits_folder_name(self):
         self.assertEqual(export.EDITS_FOLDER, "audio_edits")
