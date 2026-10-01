@@ -24,6 +24,7 @@ from .downloader import sanitise_filename
 
 FAT_MAX_FILE = 4 * 1024 ** 3 - 1
 FAT_TYPES = {"vfat", "fat", "fat32", "msdos"}
+WINDOWS_TYPES = {"exfat", "ntfs", "ntfs3", "fuseblk"}
 _FAT_BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
              *(f"LPT{i}" for i in range(1, 10))}
@@ -48,7 +49,13 @@ class Volume:
 
     @property
     def is_fat(self) -> bool:
+        """FAT has the 4 GiB per-file limit."""
         return self.fstype.lower() in FAT_TYPES
+
+    @property
+    def windows_names(self) -> bool:
+        """Windows-style filesystems reject  < > : " / \\ | ? *  in names (FAT, exFAT, NTFS)."""
+        return self.fstype.lower() in FAT_TYPES | WINDOWS_TYPES
 
     @property
     def title(self) -> str:
@@ -196,6 +203,7 @@ def _write_attribution(root: str, entries: Sequence) -> None:
 
 
 def copy_tracks(entries: Sequence, dest_root: str, *, layout: str = "flat", fat: bool = False,
+                safe_names: Optional[bool] = None,
                 transform: Optional[Callable[[str, str], None]] = None,
                 transform_ext: Optional[str] = None,
                 free_bytes: Optional[int] = None,
@@ -210,6 +218,7 @@ def copy_tracks(entries: Sequence, dest_root: str, *, layout: str = "flat", fat:
     overwritten. Raises ExportError up front if the destination is unusable or
     there is not enough room; per-track problems are collected in `Result`.
     """
+    safe = fat if safe_names is None else safe_names          # `fat` also implies the 4 GiB limit
     if not os.path.isdir(dest_root):
         raise ExportError(f"The destination folder doesn't exist: {dest_root}")
     if not os.access(dest_root, os.W_OK):
@@ -242,7 +251,7 @@ def copy_tracks(entries: Sequence, dest_root: str, *, layout: str = "flat", fat:
     for e in todo:
         if cancel and cancel():
             raise ExportError("cancelled")
-        dst = destination(e, dest_root, layout, fat, transform_ext if transform else None)
+        dst = destination(e, dest_root, layout, safe, transform_ext if transform else None)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         if (not transform and os.path.exists(dst) and os.path.getsize(dst) == sizes[e.path]):
             result.skipped.append((e.title, "already there"))

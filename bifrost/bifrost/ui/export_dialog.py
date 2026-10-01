@@ -216,15 +216,15 @@ class ExportDialog(Gtk.Window):
                 root = export.mount_volume(vol)
                 dest = os.path.join(root, USB_FOLDER)
                 os.makedirs(dest, exist_ok=True)
-                fat = vol.is_fat
+                fat, safe = vol.is_fat, vol.windows_names
             else:
-                dest, fat = folder, False
+                dest, fat, safe = folder, False, False
             transform = export.processing_transform(self.ctx.chain) if processed else None
 
             def prog(done, total, name):
                 GLib.idle_add(self._progress, done, total, name)
 
-            res = export.copy_tracks(self.entries, dest, layout=layout, fat=fat, transform=transform,
+            res = export.copy_tracks(self.entries, dest, layout=layout, fat=fat, safe_names=safe, transform=transform,
                                      transform_ext=fmt if processed else None, progress=prog,
                                      cancel=self._cancel.is_set)
             GLib.idle_add(self._done, res, dest, vol)

@@ -87,8 +87,8 @@ Everything downloaded, ripped or imported. Select tracks (or none, for all) and:
 The export dialog writes either the **original files** or a **bilateral version**
 rendered through your current settings (FLAC or MP3). Names can be flat
 (`Artist - Title`, best for car stereos), `Artist/Title`, or
-`Artist/Album/NN - Title`. On FAT drives, names are made FAT-safe and files over
-4 GiB are skipped; space is checked before anything is written; files are written
+`Artist/Album/NN - Title`. On FAT, exFAT and NTFS drives, names are made Windows-safe
+(`? : " * < > |` removed, `/` becomes `-`), and on FAT files over 4 GiB are skipped; space is checked before anything is written; files are written
 to a temp name, flushed to disk, then renamed, so unplugging mid-copy never leaves
 a truncated track that looks finished. Creative Commons tracks get an
 `ATTRIBUTION.txt` beside them. Tracks under a **no-derivatives** license can be
@@ -164,17 +164,24 @@ file ──ffmpeg──▶ f32 PCM ──▶ Pan ──▶ AmpMod ──▶ volu
 
 ## What has and hasn't been verified
 
-Verified on real hardware while building this: the CD path end to end (table of
-contents, exact MusicBrainz match, a rip whose length equalled the disc's sector
-count, a FLAC that decodes bit-identical to the ripped data, tagged MP3/FLAC), the
-GUI's rip flow against a real disc, and live mode against the real PipeWire graph
-(virtual sink, rerouting a running stream, capturing a 440 Hz tone back at
-443 Hz, restoring the stream to the real output, cleanup after exit).
+Verified on real hardware while building this:
 
-**Not** verified: exporting to a real USB stick (the discovery, FAT handling and
-copy engine are tested against a fixture shaped like real `lsblk` output and
-temp folders, but no stick was attached), live mode with a real Spotify stream
-(tested with a `pw-play` stream), and the sound itself on your headphones.
+- **CD ripping** end to end: table of contents, exact MusicBrainz match, a rip whose
+  length equalled the disc's sector count, a FLAC that decodes bit-identical to the
+  ripped data, tagged MP3/FLAC; and the GUI's rip flow against a real disc.
+- **USB export** on a real NTFS stick, through the actual dialog: originals
+  byte-identical (SHA-256), Windows-safe names for a deliberately hostile title,
+  attribution file written, a repeat export skipped everything, bilateral MP3s
+  rendered at the right lengths, and everything still intact after unmounting and
+  remounting (so the data reached the drive, not just the cache). The real
+  **Safely remove drive** step powered the stick off.
+- **Live mode** against the real PipeWire graph: virtual sink, rerouting a running
+  stream, capturing a 440 Hz tone back at 443 Hz, restoring the stream to the real
+  output, and cleanup after exit.
+
+**Not** verified: exporting to a FAT or exFAT stick (the FAT 4 GiB and name rules
+are unit-tested; only NTFS was available), live mode with a real Spotify stream
+(tested with a `pw-play` stream), and the sound itself on headphones.
 
 ## Layout
 

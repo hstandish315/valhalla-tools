@@ -74,6 +74,16 @@ class TestVolumes(unittest.TestCase):
         self.assertEqual(v["/dev/sdc"].mountpoint, "")
         self.assertIn("MUSIC", v["/dev/sdb1"].title)
 
+    def test_windows_filesystems_need_safe_names_but_only_fat_has_the_4gib_limit(self):
+        mk = lambda t: export.Volume("/dev/x1", "/dev/x", fstype=t)
+        for t in ("vfat", "exfat", "ntfs", "ntfs3", "fuseblk"):
+            self.assertTrue(mk(t).windows_names, t)
+        self.assertFalse(mk("ext4").windows_names)
+        self.assertFalse(mk("btrfs").windows_names)
+        self.assertTrue(mk("vfat").is_fat)
+        self.assertFalse(mk("ntfs").is_fat)
+        self.assertFalse(mk("exfat").is_fat)
+
     def test_lsblk_failure_is_a_clean_error(self):
         def boom(*a, **k):
             raise FileNotFoundError("lsblk")
@@ -208,6 +218,15 @@ class TestCopy(CopyBase):
         with self.assertRaisesRegex(export.ExportError, "Not enough space"):
             export.copy_tracks([e], self.dst, free_bytes=1000)
         self.assertEqual(os.listdir(self.dst), [])
+
+    def test_safe_names_without_the_fat_limit_for_ntfs_and_exfat(self):
+        e = self.entry("x.flac", title='What? Why: "Not"', creator="AC/DC")
+        with open(e.path, "wb") as fh:
+            fh.truncate(export.FAT_MAX_FILE + 10)               # sparse; > 4 GiB
+        r = export.copy_tracks([e], self.dst, fat=False, safe_names=True, free_bytes=10 ** 13)
+        self.assertEqual(r.skipped, [], "NTFS/exFAT have no 4 GiB limit")
+        self.assertEqual(len(r.copied), 1)
+        self.assertFalse(set('<>:"/\\|?*') & set(os.path.basename(r.copied[0])))
 
     def test_fat_4gib_limit_skips_the_file(self):
         e = self.entry("huge.flac")

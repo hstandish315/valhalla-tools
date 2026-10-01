@@ -54,7 +54,11 @@ def host_allowed(host: str, allowed: Iterable[str]) -> bool:
 
 def sanitise_filename(text: str, limit: int = 80) -> str:
     """Letters, digits, space, dot, dash, underscore only; no path separators."""
+    # A separator inside a name ("AC/DC", "Electro/Vocal") is a word break, not noise:
+    # turn it into a hyphen so the words stay apart, then drop everything else unsafe.
+    text = re.sub(r"[/\\]+", "-", text)
     cleaned = re.sub(r"[^\w .\-]", "", text, flags=re.UNICODE)
+    cleaned = re.sub(r"\.{2,}", ".", cleaned)            # no ".." even inside a name
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .-_")
     return (cleaned or "track")[:limit].rstrip(" .-_") or "track"
 

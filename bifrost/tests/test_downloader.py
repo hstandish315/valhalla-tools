@@ -81,6 +81,12 @@ class TestHelpers(unittest.TestCase):
         self.assertFalse(dl.host_allowed("notjamendo.com", a))
         self.assertFalse(dl.host_allowed("", a))
 
+    def test_separators_become_hyphens_so_words_stay_apart(self):
+        self.assertEqual(dl.sanitise_filename("AC/DC"), "AC-DC")
+        self.assertEqual(dl.sanitise_filename("Electro/Vocal Mix"), "Electro-Vocal Mix")
+        self.assertEqual(dl.sanitise_filename("a\\b"), "a-b")
+        self.assertEqual(dl.sanitise_filename('What? Why: "Not"'), "What Why Not")
+
     def test_sanitised_names_cannot_traverse(self):
         for nasty in ("../../etc/passwd", "a/b\\c", "..", "", "x\x00y", "  . "):
             name = dl.sanitise_filename(nasty)
