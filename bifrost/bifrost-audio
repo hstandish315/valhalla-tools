@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Launcher for Bifrost. Uses the project venv (numpy + system PyGObject).
+set -euo pipefail
+here="$(dirname "$(readlink -f "$0")")"
+cd "$here"
+if [[ ! -x venv/bin/python3 ]]; then
+    echo "Bifrost is not set up yet. Run: $here/setup.sh" >&2
+    exit 1
+fi
+exec venv/bin/python3 -m bifrost "$@"

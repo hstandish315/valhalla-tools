@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Launcher for the Valhalla dashboard. Runs from the source tree; no install step.
+set -euo pipefail
+cd "$(dirname "$(readlink -f "$0")")"
+exec python3 -m valhalla "$@"
