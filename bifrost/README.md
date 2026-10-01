@@ -202,10 +202,12 @@ Verified on real hardware while building this:
   processed audio, and Spotify returned to the speakers afterwards. A followed app's new
   stream is moved automatically on the real graph (opt-in `TestRealFollow`).
 
+Confirmed by ear on a real Spotify session: switching songs while followed keeps the
+effect on, the static is gone, and the level matches the original.
+
 **Not** verified: exporting to a FAT or exFAT stick (the FAT 4 GiB and name rules
-are unit-tested; only NTFS was available), Spotify actually changing track *while*
-followed (a Spotify-shaped new stream was simulated instead), and the sound itself on
-headphones.
+are unit-tested; only NTFS was available) and how comfortable the default 16 Hz pulse
+depth is over long sessions (it is a starting point; every parameter stays live).
 
 ## Layout
 
