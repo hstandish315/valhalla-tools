@@ -158,6 +158,7 @@ def destination(entry, root: str, layout: str, fat: bool, ext: Optional[str] = N
 @dataclass
 class Result:
     copied: list[str] = field(default_factory=list)
+    replaced: list[str] = field(default_factory=list)                  # earlier renders superseded
     skipped: list[tuple[str, str]] = field(default_factory=list)       # (title, reason)
     failed: list[tuple[str, str]] = field(default_factory=list)
     bytes: int = 0
@@ -172,6 +173,24 @@ def _fsync_dir(path: str) -> None:
             os.close(fd)
     except OSError:
         pass
+
+
+def _same_content(a: str, b: str) -> bool:
+    """True if two files are byte-for-byte identical (size first, then a streamed hash)."""
+    import hashlib
+    try:
+        if os.path.getsize(a) != os.path.getsize(b):
+            return False
+        ha, hb = hashlib.sha256(), hashlib.sha256()
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            while True:
+                ca, cb = fa.read(1 << 20), fb.read(1 << 20)
+                if not ca and not cb:
+                    return ha.digest() == hb.digest()
+                ha.update(ca)
+                hb.update(cb)
+    except OSError:
+        return False
 
 
 def _unique(path: str) -> str:
@@ -208,15 +227,19 @@ def copy_tracks(entries: Sequence, dest_root: str, *, layout: str = "flat", fat:
                 transform: Optional[Callable[[str, str], None]] = None,
                 transform_ext: Optional[str] = None,
                 free_bytes: Optional[int] = None,
+                replace_existing: bool = False,
                 progress: Optional[Callable[[int, int, str], None]] = None,
                 cancel: Optional[Callable[[], bool]] = None) -> Result:
     """
     Copy (or, with `transform`, render) each entry into `dest_root`.
 
     `transform(src, dst)` writes a processed copy to `dst`; entries whose license
-    forbids modification are skipped in that mode. Existing identical files are
-    skipped; different files with the same name get " (2)" rather than being
-    overwritten. Raises ExportError up front if the destination is unusable or
+    forbids modification are skipped in that mode. Re-exporting is idempotent: a file
+    that is already there and identical is skipped. A *different* file with the same
+    name gets " (2)" rather than being overwritten, except that with `replace_existing`
+    (used for bilateral renders, which live in a folder of their own) a re-render with
+    new settings supersedes the earlier one instead of leaving a duplicate. Raises
+    ExportError up front if the destination is unusable or
     there is not enough room; per-track problems are collected in `Result`.
     """
     safe = fat if safe_names is None else safe_names          # `fat` also implies the 4 GiB limit
@@ -259,8 +282,10 @@ def copy_tracks(entries: Sequence, dest_root: str, *, layout: str = "flat", fat:
             done += sizes[e.path]
             landed.append(e)
             continue
-        dst = _unique(dst)
-        stem, ext = os.path.splitext(os.path.basename(dst))
+        base = dst
+        if not transform:
+            dst = _unique(base)                 # transforms decide after rendering: see below
+        stem, ext = os.path.splitext(os.path.basename(base))
         # Keep the real extension last: ffmpeg picks the container from it when a
         # transform renders straight into the temp file.
         part = os.path.join(os.path.dirname(dst), f".{stem}.part{ext}")
@@ -285,6 +310,20 @@ def copy_tracks(entries: Sequence, dest_root: str, *, layout: str = "flat", fat:
                 with open(part, "rb") as fh:
                     os.fsync(fh.fileno())
                 done += sizes[e.path]
+                if os.path.exists(base):
+                    if _same_content(part, base):                     # same render as last time
+                        result.skipped.append((e.title, "already there"))
+                        landed.append(e)
+                        if progress:
+                            progress(done, total, e.title)
+                        continue
+                    if replace_existing:
+                        dst = base
+                        result.replaced.append(base)
+                    else:
+                        dst = _unique(base)
+                else:
+                    dst = base
             os.replace(part, dst)
             _fsync_dir(os.path.dirname(dst))
             result.copied.append(dst)

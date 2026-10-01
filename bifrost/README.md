@@ -82,7 +82,10 @@ found. (Openverse silently ignores its own `creator` filter, so this matching is
 done in the app.)
 
 ### Library — and saving or exporting your tracks
-Everything downloaded, ripped or imported. Select tracks (or none, for all) and:
+Everything downloaded, ripped or imported. Each track has a **checkbox**; tick the ones you
+want, or tick none to use everything. The buttons say exactly how many they will use
+(`Export to USB… (3)` or `(all 13)`), and the export dialog lists the track names before
+anything is written. A double-click (or Enter) plays a track; a single click does neither. Then:
 
 - **Save copies…** copies them to any folder;
 - **Export to USB…** copies them to a USB drive, with a **Safely remove drive**
@@ -110,6 +113,10 @@ to a temp name, flushed to disk, then renamed, so unplugging mid-copy never leav
 a truncated track that looks finished. Creative Commons tracks get an
 `ATTRIBUTION.txt` beside them. Tracks under a **no-derivatives** license can be
 copied but not exported as processed versions.
+
+Re-exporting is safe: tracks already at the destination are skipped, and a bilateral version
+re-rendered with new settings *replaces* its earlier version in `audio_edits` instead of piling
+up `(2)` copies.
 
 *Remove* only deletes files Bifrost downloaded (re-downloadable). Ripped and
 imported tracks are only taken off the list.

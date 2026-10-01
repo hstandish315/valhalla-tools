@@ -163,6 +163,46 @@ class TestCarScenario(Base):
         with open(os.path.join(d, "audio_edits", export.ATTRIBUTION_FILE), encoding="utf-8") as fh:
             self.assertIn("line for the CC track", fh.read())
 
+    def test_re_exporting_bilateral_versions_does_not_duplicate_them(self):
+        d, vol = self.stick()
+        dlg = self.open_usb(self.ripped_album(2), vol)
+        dlg.btn_proc.set_active(True)
+        self.do_export(dlg)
+        before = sorted(os.path.join(r, f) for r, _, fs in os.walk(os.path.join(d, "audio_edits")) for f in fs)
+        self.do_export(dlg)                                           # same tracks, same settings
+        self.assertIn("already there", dlg.status.get_label())
+        after = sorted(os.path.join(r, f) for r, _, fs in os.walk(os.path.join(d, "audio_edits")) for f in fs)
+        self.assertEqual(before, after)
+        self.assertFalse([f for f in after if "(2)" in f], "no numbered duplicates")
+
+    def test_changing_a_knob_and_re_exporting_replaces_rather_than_duplicates(self):
+        d, vol = self.stick()
+        dlg = self.open_usb(self.ripped_album(2), vol)
+        dlg.btn_proc.set_active(True)
+        self.do_export(dlg)
+        self.ctx.chain.am.depth = 0.5                                  # the user turned the Pulse depth up
+        self.do_export(dlg)
+        files = [f for _, _, fs in os.walk(os.path.join(d, "audio_edits")) for f in fs if f.endswith(".mp3")]
+        self.assertEqual(len(files), 2, files)
+        self.assertIn("replaced", dlg.status.get_label())
+
+    def test_the_dialog_names_what_it_is_about_to_export(self):
+        d, vol = self.stick()
+        dlg = self.open_usb(self.ripped_album(6), vol)
+        text = []
+
+        def walk(w):
+            if isinstance(w, Gtk.Label):
+                text.append(w.get_label())
+            c = w.get_first_child()
+            while c is not None:
+                walk(c)
+                c = c.get_next_sibling()
+        walk(dlg.get_child())
+        line = next(t for t in text if t.startswith("Exporting:"))
+        self.assertIn("Song 1", line)
+        self.assertIn("and 2 more", line)
+
     def test_status_names_the_audio_edits_folder(self):
         d, vol = self.stick()
         dlg = self.open_usb(self.ripped_album(1), vol)

@@ -22,6 +22,15 @@ class LibraryRow(Gtk.Box):
         self.set_margin_top(6)
         self.set_margin_bottom(6)
 
+        # An explicit checkbox, not list selection: GTK's multi-select list adds every plain
+        # click to the selection (so an old selection lingered, faintly highlighted, and was
+        # exported again) and a single click also played the track.
+        self.check = Gtk.CheckButton()
+        self.check.set_valign(Gtk.Align.CENTER)
+        self.check.set_tooltip_text("Tick the tracks to save or export")
+        self.check.connect("toggled", lambda *_: view._on_select())
+        self.append(self.check)
+
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         text.set_hexpand(True)
         text.append(label(entry.title, [], ellipsize=True))
@@ -67,25 +76,29 @@ class LibraryView(Gtk.Box):
         add.connect("clicked", self._on_add)
         bar.append(add)
         self.btn_folder = Gtk.Button(label="Save copies…")
-        self.btn_folder.set_tooltip_text("Copy the selected tracks (or all of them) to a folder.")
+        self.btn_folder.set_tooltip_text("Copy the ticked tracks (or all of them if none are ticked) to a folder.")
         self.btn_folder.connect("clicked", lambda *_: self._export("folder"))
         bar.append(self.btn_folder)
         self.btn_usb = Gtk.Button(label="Export to USB…")
-        self.btn_usb.set_tooltip_text("Copy the selected tracks (or all of them) to a USB drive.")
+        self.btn_usb.set_tooltip_text("Copy the ticked tracks (or all of them if none are ticked) to a USB drive.")
         self.btn_usb.connect("clicked", lambda *_: self._export("usb"))
         bar.append(self.btn_usb)
         self.btn_remove = Gtk.Button(label="Remove")
         self.btn_remove.connect("clicked", self._on_remove)
         bar.append(self.btn_remove)
+        self.btn_all = Gtk.Button(label="Select all")
+        self.btn_all.connect("clicked", self._on_toggle_all)
+        bar.append(self.btn_all)
         self.count = label("", ["status"], xalign=1.0)
         self.count.set_hexpand(True)
         bar.append(self.count)
         b.append(bar)
 
         self.list = Gtk.ListBox()
-        self.list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
-        self.list.connect("selected-rows-changed", lambda *_: self._on_select())
+        self.list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.list.set_activate_on_single_click(False)        # a double-click or Enter plays; one click doesn't
         self.list.connect("row-activated", lambda lb, row: ctx.play_entry(row.get_child().entry))
+        self._bulk = False
         sw = Gtk.ScrolledWindow()
         sw.set_vexpand(True)
         sw.set_child(self.list)
@@ -98,8 +111,15 @@ class LibraryView(Gtk.Box):
         self.refresh()
 
     # ------------------------------------------------------------- state ---
+    def _rows(self):
+        row = self.list.get_first_child()
+        while row is not None:
+            yield row.get_child()
+            row = row.get_next_sibling()
+
     def selected_entries(self) -> list:
-        return [row.get_child().entry for row in self.list.get_selected_rows()]
+        """Exactly the ticked tracks, in list order. Nothing else."""
+        return [r.entry for r in self._rows() if r.check.get_active()]
 
     def selected(self):
         sel = self.selected_entries()
@@ -107,33 +127,49 @@ class LibraryView(Gtk.Box):
 
     def refresh(self) -> None:
         keep = {e.path for e in self.selected_entries()}
+        self._bulk = True
         self.list.remove_all()
         for e in self.ctx.library.entries:
-            self.list.append(LibraryRow(self, e))
+            row = LibraryRow(self, e)
+            row.check.set_active(e.path in keep)
+            self.list.append(row)
+        self._bulk = False
         n = len(self.ctx.library.entries)
         self.count.set_label(f"{n} track{'s' if n != 1 else ''}  ·  {self.ctx.library.music_dir}")
-        row = self.list.get_first_child()
-        while row is not None:
-            if row.get_child().entry.path in keep:
-                self.list.select_row(row)
-            row = row.get_next_sibling()
         self._on_select()
 
+    def _set_all(self, checked: bool) -> None:
+        self._bulk = True
+        for r in self._rows():
+            r.check.set_active(checked)
+        self._bulk = False
+        self._on_select()
+
+    def _on_toggle_all(self, _btn) -> None:
+        self._set_all(len(self.selected_entries()) < len(self.ctx.library.entries))
+
     def _on_select(self) -> None:
+        if self._bulk:
+            return
         sel = self.selected_entries()
-        has_any = bool(self.ctx.library.entries)
+        total = len(self.ctx.library.entries)
+        scope = f"({len(sel)})" if sel else f"(all {total})"
         self.btn_remove.set_sensitive(bool(sel))
-        self.btn_folder.set_sensitive(has_any)
-        self.btn_usb.set_sensitive(has_any)
+        self.btn_remove.set_label(f"Remove ({len(sel)})" if sel else "Remove")
+        self.btn_folder.set_sensitive(total > 0)
+        self.btn_usb.set_sensitive(total > 0)
+        self.btn_folder.set_label(f"Save copies… {scope}")
+        self.btn_usb.set_label(f"Export to USB… {scope}")
+        self.btn_all.set_label("Select none" if sel and len(sel) == total else "Select all")
         if len(sel) == 1:
             e = sel[0]
             parts = [e.attribution or f"{e.title} — {e.license}", e.landing_url, e.path]
             self.detail.set_label("\n".join(p for p in parts if p))
         elif len(sel) > 1:
-            self.detail.set_label(f"{len(sel)} tracks selected. Save copies / Export to USB will use these.")
+            self.detail.set_label(f"{len(sel)} tracks ticked. Save copies / Export to USB will use exactly these.")
         else:
-            self.detail.set_label("Select tracks (Ctrl/Shift-click for several), or leave none "
-                                  "selected to export everything.")
+            self.detail.set_label("Tick the tracks you want. With none ticked, Save copies and Export to USB "
+                                  f"use everything ({total}). Double-click a track to play it.")
 
     # ----------------------------------------------------------- actions ---
     def _on_add(self, _btn):

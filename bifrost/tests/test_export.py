@@ -333,6 +333,106 @@ class TestAttribution(CopyBase):
         self.assertFalse(os.path.exists(os.path.join(self.dst, export.ATTRIBUTION_FILE)))
 
 
+class TestReExport(CopyBase):
+    """Exporting the same tracks again must not litter the destination with duplicates."""
+
+    def render(self, payload):
+        def go(src, dst):
+            put(dst, payload)
+        return go
+
+    def run_export(self, payload, **kw):
+        e = self.entry("a.mp3", title="Song", creator="Band", license="CC BY 4.0")
+        return export.copy_tracks([e], self.dst, transform=self.render(payload), transform_ext="mp3", **kw), e
+
+    def mp3s(self):
+        return sorted(f for f in os.listdir(self.dst) if f.endswith(".mp3"))
+
+    def test_an_identical_re_render_is_recognised_and_skipped(self):
+        r1, e = self.run_export(b"same render")
+        r2 = export.copy_tracks([e], self.dst, transform=self.render(b"same render"), transform_ext="mp3")
+        self.assertEqual(len(r1.copied), 1)
+        self.assertEqual((r2.copied, [x[1] for x in r2.skipped]), ([], ["already there"]))
+        self.assertEqual(self.mp3s(), ["Band - Song.mp3"])
+
+    def test_a_different_render_without_replace_gets_a_numbered_copy_and_the_old_one_survives(self):
+        _, e = self.run_export(b"first")
+        export.copy_tracks([e], self.dst, transform=self.render(b"second"), transform_ext="mp3")
+        self.assertEqual(self.mp3s(), ["Band - Song (2).mp3", "Band - Song.mp3"])
+        with open(os.path.join(self.dst, "Band - Song.mp3"), "rb") as fh:
+            self.assertEqual(fh.read(), b"first")
+
+    def test_a_different_render_with_replace_existing_supersedes_the_old_one(self):
+        _, e = self.run_export(b"first")
+        r = export.copy_tracks([e], self.dst, transform=self.render(b"second"), transform_ext="mp3",
+                               replace_existing=True)
+        self.assertEqual(self.mp3s(), ["Band - Song.mp3"], "no (2) duplicate")
+        with open(os.path.join(self.dst, "Band - Song.mp3"), "rb") as fh:
+            self.assertEqual(fh.read(), b"second")
+        self.assertEqual(len(r.replaced), 1)
+        self.assertEqual(len(r.copied), 1)
+
+    def test_replace_existing_still_skips_when_nothing_changed(self):
+        _, e = self.run_export(b"same")
+        r = export.copy_tracks([e], self.dst, transform=self.render(b"same"), transform_ext="mp3",
+                               replace_existing=True)
+        self.assertEqual((r.copied, r.replaced), ([], []))
+
+    def test_no_partial_files_after_any_of_these(self):
+        _, e = self.run_export(b"one")
+        export.copy_tracks([e], self.dst, transform=self.render(b"two"), transform_ext="mp3", replace_existing=True)
+        export.copy_tracks([e], self.dst, transform=self.render(b"two"), transform_ext="mp3", replace_existing=True)
+        self.assertEqual([f for f in os.listdir(self.dst) if ".part" in f], [])
+
+    def test_a_failed_re_render_leaves_the_earlier_version_intact(self):
+        _, e = self.run_export(b"good")
+
+        def boom(src, dst):
+            put(dst, b"half")
+            raise RuntimeError("ffmpeg died")
+        r = export.copy_tracks([e], self.dst, transform=boom, transform_ext="mp3", replace_existing=True)
+        self.assertEqual(len(r.failed), 1)
+        with open(os.path.join(self.dst, "Band - Song.mp3"), "rb") as fh:
+            self.assertEqual(fh.read(), b"good")
+
+    def test_real_renders_are_deterministic_so_re_exporting_really_is_a_no_op(self):
+        from bifrost import dsp
+        src = os.path.join(self.src, "t.wav")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=330:duration=2",
+                        "-ac", "2", src], check=True)
+        e = Entry(path=src, title="T", creator="B", album="A", track=1, source="cd", license="Ripped from own CD")
+        chain = dsp.Chain()
+        first = export.copy_tracks([e], self.dst, layout="album", transform=export.processing_transform(chain, [e]),
+                                   transform_ext="mp3", replace_existing=True)
+        again = export.copy_tracks([e], self.dst, layout="album", transform=export.processing_transform(chain, [e]),
+                                   transform_ext="mp3", replace_existing=True)
+        self.assertEqual(len(first.copied), 1, first.failed)
+        self.assertEqual((again.copied, again.replaced, [x[1] for x in again.skipped]), ([], [], ["already there"]))
+        mp3s = [f for r, _, fs in os.walk(self.dst) for f in fs if f.endswith(".mp3")]
+        self.assertEqual(len(mp3s), 1)
+
+    def test_changing_the_settings_replaces_the_real_render(self):
+        from bifrost import dsp
+        src = os.path.join(self.src, "t.wav")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=330:duration=2",
+                        "-ac", "2", src], check=True)
+        e = Entry(path=src, title="T", creator="B", source="cd", license="Ripped from own CD")
+        a, b = dsp.Chain(), dsp.Chain()
+        b.am.depth = 0.5
+        export.copy_tracks([e], self.dst, transform=export.processing_transform(a, [e]), transform_ext="mp3",
+                           replace_existing=True)
+        r = export.copy_tracks([e], self.dst, transform=export.processing_transform(b, [e]), transform_ext="mp3",
+                               replace_existing=True)
+        self.assertEqual(len(r.replaced), 1)
+        self.assertEqual([f for f in os.listdir(self.dst) if f.endswith(".mp3")], ["B - T.mp3"])
+
+    def test_plain_copies_keep_their_existing_behaviour(self):
+        e = self.entry("a.mp3", 3000, title="Song", creator="Band")
+        export.copy_tracks([e], self.dst)
+        r = export.copy_tracks([e], self.dst)
+        self.assertEqual([x[1] for x in r.skipped], ["already there"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

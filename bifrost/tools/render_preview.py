@@ -93,8 +93,14 @@ def main() -> int:
     # carry the real home directory.
     lib = Library("/home/user/Music/Bifrost", os.path.join(tmp, "data"))
     names = ["Harbour Lights", "The Long Crossing", "Salt and Rope", "Low Water", "Morning Bells"]
-    for t in args.track:
-        e = lib.add_local(t)
+    # The detail panel prints a track's full path, and published screenshots must not show
+    # where the sample files really live: work from neutrally named copies in a temp folder.
+    music = os.path.join(tmp, "Music")
+    os.makedirs(music, exist_ok=True)
+    for i, t in enumerate(args.track):
+        neutral = os.path.join(music, names[i % len(names)] + os.path.splitext(t)[1])
+        shutil.copy2(t, neutral)
+        e = lib.add_local(neutral)
         if e:
             n = len(lib.entries)
             e.title, e.creator, e.album, e.track = names[(n - 1) % len(names)], "Example Ensemble", "Evening Tide", n
@@ -149,6 +155,12 @@ def main() -> int:
             return False
         return go
 
+    def tick_first():
+        rows = list(win().libview._rows())
+        if rows:
+            rows[0].check.set_active(True)               # show the ticked state and the live counts
+        return False
+
     def live_on():
         ctx.router = FakeRouter()
         ctx.live.state = "playing"
@@ -190,6 +202,7 @@ def main() -> int:
         t(2900, show_browse)
         t(3700, snap("browse.png"))
         t(3900, show("library"))
+        t(4300, tick_first)
         t(4700, snap("library.png"))
         t(4900, show("rip"))
         t(6400, snap("rip.png"))

@@ -50,6 +50,10 @@ class ExportDialog(Gtk.Window):
         total = sum(os.path.getsize(e.path) for e in self.entries if os.path.exists(e.path))
         n = len(self.entries)
         box.append(label(f"{n} track{'s' if n != 1 else ''}  ·  {total / 1024 ** 2:.0f} MiB", ["title-big"]))
+        # Say exactly what will be exported, so a stray selection can't go unnoticed.
+        names = [e.title for e in self.entries]
+        box.append(label("Exporting: " + ", ".join(names[:4]) + (f" … and {n - 4} more" if n > 4 else ""),
+                         ["status"], wrap=True))
 
         # destination ---------------------------------------------------------
         row = Gtk.Box(spacing=8)
@@ -249,7 +253,8 @@ class ExportDialog(Gtk.Window):
                 GLib.idle_add(self._progress, done, total, name)
 
             res = export.copy_tracks(self.entries, dest, layout=layout, fat=fat, safe_names=safe, transform=transform,
-                                     transform_ext=out_ext, progress=prog,
+                                     transform_ext=out_ext, replace_existing=(mode == "bilateral"),
+                                     progress=prog,
                                      cancel=self._cancel.is_set)
             GLib.idle_add(self._done, res, dest, vol)
         except export.ExportError as exc:
@@ -279,6 +284,9 @@ class ExportDialog(Gtk.Window):
         self.bar.set_fraction(1.0)
         parts = [f"Copied {len(res.copied)} track{'s' if len(res.copied) != 1 else ''} "
                  f"({res.bytes / 1024 ** 2:.0f} MiB) to {dest}."]
+        if res.replaced:
+            parts.append(f"{len(res.replaced)} earlier version{'s were' if len(res.replaced) != 1 else ' was'} "
+                         f"replaced with the new render.")
         if res.skipped:
             parts.append("Skipped: " + "; ".join(f"{t} ({r})" for t, r in res.skipped[:3])
                          + (" …" if len(res.skipped) > 3 else ""))
