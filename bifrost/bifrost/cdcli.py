@@ -39,11 +39,14 @@ def _album(toc, did, lookup: bool):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="bifrost-audio cd", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("info", "rip"):
+    for name in ("info", "rip", "art"):
         p = sub.add_parser(name)
         p.add_argument("--device", help="e.g. /dev/sr0 (default: the first drive)")
         p.add_argument("--no-lookup", action="store_true", help="don't contact MusicBrainz")
         p.add_argument("--no-cover", action="store_true", help="don't fetch or embed cover art")
+    art = sub.choices["art"]
+    art.add_argument("--dry-run", action="store_true", help="show what would change, change nothing")
+    art.add_argument("--replace", action="store_true", help="also replace art that is already embedded")
     rip = sub.choices["rip"]
     rip.add_argument("--out", default=Settings()["rip_dir"], help="folder to save into")
     rip.add_argument("--format", choices=list(cd.FORMATS), default="flac")
@@ -72,6 +75,8 @@ def main(argv=None) -> int:
         print(f"  {t.number:2d}  {int(t.seconds // 60)}:{int(t.seconds % 60):02d}  {name}{kind}")
     if args.cmd == "info":
         return 0
+    if args.cmd == "art":
+        return _add_art(args, album)
 
     wanted = {t.number for t in toc.audio_tracks}
     if args.tracks:
@@ -113,3 +118,40 @@ def main(argv=None) -> int:
             print(f"\rFAILED  {t.number:2d}  {exc}")
     print(f"Saved to {args.out}" + (f"  ({failures} failed)" if failures else ""))
     return 1 if failures else 0
+
+
+def _add_art(args, album) -> int:
+    """Embed the matched release's cover into files already ripped from this disc."""
+    from .library import Library
+    from .sources.match import norm
+    if album is None or not album.mbid:
+        print("error: MusicBrainz doesn't know this disc, so there is no release to take art from.", file=sys.stderr)
+        return 1
+    try:
+        cover = musicbrainz.fetch_cover(album.mbid)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        print(f"error: couldn't fetch the cover: {exc}", file=sys.stderr)
+        return 1
+    if not cover:
+        print("No cover art is available for this release.")
+        return 1
+    want = (norm(album.artist), norm(album.title))
+    files = [e for e in Library().entries
+             if (norm(e.creator), norm(e.album)) == want and e.path.lower().endswith((".flac", ".mp3"))]
+    print(f"\nCover found. {len(files)} file(s) in your library are from {album.title!r} by {album.artist}:")
+    done = skipped = failed = 0
+    for e in sorted(files, key=lambda x: (x.track, x.path)):
+        name = os.path.basename(e.path)
+        if cd.has_cover(e.path) and not args.replace:
+            print(f"  skip    {name}  (already has art)")
+            skipped += 1
+        elif args.dry_run:
+            print(f"  would add  {name}")
+        elif cd.embed_cover(e.path, cover, replace=args.replace):
+            print(f"  added   {name}")
+            done += 1
+        else:
+            print(f"  FAILED  {name}  (left untouched: verification did not pass)")
+            failed += 1
+    print(f"\n{'Dry run: nothing changed.' if args.dry_run else f'Done: {done} updated, {skipped} skipped, {failed} failed.'}")
+    return 1 if failed else 0

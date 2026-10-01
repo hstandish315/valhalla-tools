@@ -311,6 +311,121 @@ class TestRipWithCover(Fixture):
                          source_cmd=ffmpeg_source, cover=self.cover_bytes)
 
 
+class TestEmbedCoverIntoExistingFiles(Fixture):
+    """`cd art`: add a picture to files that were ripped without one, never at the audio's expense."""
+
+    def plain(self, ext="flac", **tagkw):
+        path = os.path.join(self.tmp, f"plain.{ext}")
+        codec = ["-c:a", "flac"] if ext == "flac" else ["-c:a", "libmp3lame", "-q:a", "2"]
+        ff("-f", "lavfi", "-i", "sine=frequency=520:duration=3", *codec,
+           "-metadata", "title=Old Rip", "-metadata", "artist=Some Band", "-metadata", "album=Some LP",
+           "-metadata", "track=3/11", path)
+        return path
+
+    def read(self, p):
+        with open(p, "rb") as fh:
+            return fh.read()
+
+    def temp_left(self):
+        return [f for f in os.listdir(self.tmp) if f.startswith(".art-")]
+
+    def test_a_flac_gets_the_picture_with_audio_and_tags_unchanged(self):
+        p = self.plain("flac")
+        before_md5, before_tags = cd._audio_md5(p), cd._tags(p)
+        os.chmod(p, 0o640)
+        self.assertFalse(cd.has_cover(p))
+        self.assertTrue(cd.embed_cover(p, self.cover_bytes))
+        self.assertTrue(cd.has_cover(p))
+        self.assertEqual(cd._audio_md5(p), before_md5, "the decoded audio must be bit-identical")
+        self.assertEqual(cd._tags(p), before_tags)
+        self.assertEqual(os.stat(p).st_mode & 0o777, 0o640, "permissions must be preserved")
+        self.assertEqual(self.temp_left(), [])
+
+    def test_an_mp3_gets_it_too_without_being_re_encoded(self):
+        p = self.plain("mp3")
+        before = cd._audio_md5(p)
+        self.assertTrue(cd.embed_cover(p, self.cover_bytes))
+        self.assertTrue(cd.has_cover(p))
+        self.assertEqual(cd._audio_md5(p), before)
+        self.assertEqual(cd._tags(p).get("title"), "Old Rip")
+        with open(p, "rb") as fh:
+            fh.seek(-128, os.SEEK_END)
+            self.assertEqual(fh.read(3), b"TAG")
+
+    def test_a_file_that_already_has_art_is_left_alone_unless_asked(self):
+        p = self.plain("flac")
+        self.assertTrue(cd.embed_cover(p, self.cover_bytes))
+        snapshot = self.read(p)
+        self.assertFalse(cd.embed_cover(p, self.cover_bytes))
+        self.assertEqual(self.read(p), snapshot)
+        self.assertTrue(cd.embed_cover(p, self.cover_bytes, replace=True))
+        self.assertTrue(cd.has_cover(p))
+
+    def test_formats_that_cannot_carry_a_picture_are_refused_untouched(self):
+        for ext, codec in (("ogg", ["-c:a", "libvorbis"]), ("opus", ["-c:a", "libopus"])):
+            p = os.path.join(self.tmp, f"x.{ext}")
+            ff("-f", "lavfi", "-i", "sine=duration=1", *codec, p)
+            snap = self.read(p)
+            self.assertFalse(cd.embed_cover(p, self.cover_bytes), ext)
+            self.assertEqual(self.read(p), snap)
+
+    def test_a_corrupt_cover_leaves_the_original_byte_for_byte_untouched(self):
+        p = self.plain("flac")
+        snap = self.read(p)
+        self.assertFalse(cd.embed_cover(p, b"this is not an image" * 50))
+        self.assertEqual(self.read(p), snap)
+        self.assertEqual(self.temp_left(), [])
+
+    def test_empty_cover_is_refused(self):
+        p = self.plain("flac")
+        snap = self.read(p)
+        self.assertFalse(cd.embed_cover(p, b""))
+        self.assertEqual(self.read(p), snap)
+
+    def test_if_the_audio_checksum_ever_differed_nothing_is_replaced(self):
+        p = self.plain("flac")
+        snap = self.read(p)
+        calls = {"n": 0}
+        real = cd._audio_md5
+
+        def lying(path):
+            calls["n"] += 1
+            return real(path) if calls["n"] == 1 else "deadbeef"      # the new file "decodes differently"
+        with mock_patch(cd, "_audio_md5", lying):
+            self.assertFalse(cd.embed_cover(p, self.cover_bytes))
+        self.assertEqual(self.read(p), snap)
+        self.assertEqual(self.temp_left(), [])
+
+    def test_if_the_tags_ever_differed_nothing_is_replaced(self):
+        p = self.plain("flac")
+        snap = self.read(p)
+        calls = {"n": 0}
+
+        def differing(path):
+            calls["n"] += 1
+            return {"title": "A"} if calls["n"] == 1 else {"title": "B"}
+        with mock_patch(cd, "_tags", differing):
+            self.assertFalse(cd.embed_cover(p, self.cover_bytes))
+        self.assertEqual(self.read(p), snap)
+
+    def test_a_missing_file_is_a_clean_false(self):
+        self.assertFalse(cd.embed_cover(os.path.join(self.tmp, "nope.flac"), self.cover_bytes))
+
+
+class mock_patch:
+    """Tiny context-managed attribute patch (keeps this file free of extra imports)."""
+
+    def __init__(self, obj, name, value):
+        self.obj, self.name, self.value = obj, name, value
+
+    def __enter__(self):
+        self.old = getattr(self.obj, self.name)
+        setattr(self.obj, self.name, self.value)
+
+    def __exit__(self, *a):
+        setattr(self.obj, self.name, self.old)
+
+
 class TestDefaults(unittest.TestCase):
     def test_settings_defaults(self):
         from bifrost.settings import DEFAULTS

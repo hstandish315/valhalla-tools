@@ -312,3 +312,79 @@ def rip_track(device: str, track: TocTrack, out_path: str, fmt: str, tags: Tags,
         for p in (wav, enc_tmp, cover_tmp):
             if p and os.path.exists(p):
                 os.unlink(p)
+
+
+# ------------------------------------------------- cover art for existing files ---
+
+def has_cover(path: str) -> bool:
+    """True if the file already carries an embedded picture."""
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
+                              "stream=codec_name", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=30).stdout
+        return bool(out.strip())
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
+def _audio_md5(path: str) -> str:
+    """Checksum of the *decoded audio* only, so tags and pictures don't matter."""
+    res = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-map", "0:a", "-f", "md5", "-"],
+                         capture_output=True, text=True, timeout=600)
+    return res.stdout.strip() if res.returncode == 0 else ""
+
+
+def _tags(path: str) -> dict:
+    import json
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format_tags", "-of", "json", path],
+                         capture_output=True, text=True, timeout=30).stdout
+    try:
+        return {k.lower(): v for k, v in json.loads(out).get("format", {}).get("tags", {}).items()
+                if k.lower() != "encoder"}
+    except ValueError:
+        return {}
+
+
+def embed_cover(path: str, cover: bytes, replace: bool = False) -> bool:
+    """
+    Add `cover` to an already-ripped FLAC or MP3 without re-encoding the audio.
+
+    The new file is built beside the original and swapped in only if the decoded audio is
+    bit-identical, the tags are unchanged and the picture is really there; anything else
+    leaves the original untouched. Returns False (and changes nothing) for formats that
+    can't carry a picture, for files that already have one (unless `replace`), or on any
+    verification failure.
+    """
+    ext = os.path.splitext(path)[1].lstrip(".").lower()
+    if ext not in COVER_FORMATS or not cover:
+        return False
+    if has_cover(path) and not replace:
+        return False
+    kind = "png" if cover[:4] == b"\x89PNG" else "jpg"
+    d = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".art-", suffix="." + ext, dir=d)
+    os.close(fd)
+    cover_tmp = tmp + ".cover." + kind
+    try:
+        with open(cover_tmp, "wb") as fh:
+            fh.write(cover)
+        extra = ["-id3v2_version", "3", "-write_id3v1", "1"] if ext == "mp3" else []
+        res = subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-i", path, "-i", cover_tmp, "-map", "0:a", "-map", "1:v",
+             "-map_metadata", "0", "-c", "copy", "-disposition:v", "attached_pic",
+             "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)", *extra, tmp],
+            capture_output=True, text=True, timeout=600)
+        if res.returncode != 0 or not os.path.getsize(tmp):
+            return False
+        before = _audio_md5(path)
+        if not before or before != _audio_md5(tmp):
+            return False                                   # the audio must be byte-for-byte the same
+        if _tags(path) != _tags(tmp) or not has_cover(tmp):
+            return False
+        os.chmod(tmp, os.stat(path).st_mode & 0o7777)
+        os.replace(tmp, path)
+        return True
+    finally:
+        for p in (tmp, cover_tmp):
+            if os.path.exists(p):
+                os.unlink(p)

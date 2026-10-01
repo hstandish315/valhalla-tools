@@ -140,6 +140,12 @@ editable; a disc MusicBrainz doesn't know is still rippable.
 `./bifrost-audio cd info` is a read-only way to check a drive; `cd rip` rips from
 the terminal (`--out`, `--format`, `--tracks 1,3,5-7`).
 
+**Adding cover art to albums you ripped earlier:** put the disc back in the drive and run
+`./bifrost-audio cd art` (add `--dry-run` to preview). It finds your library's files from
+that album and embeds the cover **without re-encoding**: a file is replaced only if its
+decoded audio is bit-identical, its tags are unchanged and the picture is really there;
+otherwise the original is left untouched.
+
 ### Live — any app, in real time
 Process whatever is already playing (Spotify, a browser tab, a video) without
 downloading or saving anything. It works like an equaliser: audio passes through
@@ -205,6 +211,9 @@ Verified on real hardware while building this:
 - **CD ripping** end to end: table of contents, exact MusicBrainz match, a rip whose
   length equalled the disc's sector count, a FLAC that decodes bit-identical to the
   ripped data, tagged MP3/FLAC; and the GUI's rip flow against a real disc.
+- **Adding art to existing files** (`cd art`): 11 real ripped FLACs updated, then verified
+  separately against a snapshot taken beforehand: audio checksums identical, tags
+  identical, picture present, no temp files left, permissions preserved.
 - **Cover art** from a real disc: MusicBrainz match, real Cover Art Archive download,
   and the embedded 500×500 picture extracted back out and checked to be the right album.
   A real ripped track exported as a bilateral MP3 came out with title, artist, album,
